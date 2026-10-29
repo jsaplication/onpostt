@@ -1,192 +1,334 @@
 <!DOCTYPE html>
 <html lang="pt-BR">
 <head>
-  <meta charset="UTF-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <meta name="theme-color" content="#080b16">
-  <meta name="description" content="Onpostt está em desenvolvimento. Uma nova experiência social para uma internet mais livre, humana e conectada por pessoas reais.">
-  <title>Onpostt — Uma nova experiência está chegando</title>
-  <style>
-    :root {
-      --bg: #080b16;
-      --panel: rgba(18, 24, 47, .76);
-      --text: #f5f7ff;
-      --muted: #aab3ce;
-      --purple: #9b7bff;
-      --cyan: #67e8f9;
-      --line: rgba(255,255,255,.12);
-    }
-    * { box-sizing: border-box; }
-    html { scroll-behavior: smooth; }
-    body {
-      margin: 0; color: var(--text); background:
-        radial-gradient(ellipse at 15% 8%, rgba(105,76,255,.22), transparent 36%),
-        radial-gradient(ellipse at 88% 35%, rgba(35,197,220,.12), transparent 32%),
-        var(--bg);
-      font-family: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
-      line-height: 1.6; overflow-x: hidden;
-    }
-    a { color: inherit; text-decoration: none; }
-    .wrap { width: min(1120px, calc(100% - 40px)); margin: auto; }
-    header { display:flex; align-items:center; justify-content:space-between; padding:26px 0; }
-    .brand { display:flex; gap:11px; align-items:center; font-size:1.3rem; font-weight:850; letter-spacing:-.06em; }
-    .logo {
-      width:39px; height:39px; display:grid; place-items:center; border-radius:13px;
-      color:#080b16; font-size:1.25rem; font-weight:900;
-      background:linear-gradient(135deg,var(--cyan),var(--purple));
-      box-shadow:0 0 35px rgba(119,111,255,.28);
-    }
-    .status { color:#d7d2ff; border:1px solid rgba(155,123,255,.35); background:rgba(155,123,255,.09); border-radius:999px; padding:8px 13px; font-size:.78rem; font-weight:700; }
-    .status span { display:inline-block; width:7px; height:7px; background:#a78bfa; border-radius:50%; margin-right:7px; box-shadow:0 0 10px #a78bfa; }
-    .hero { text-align:center; padding:84px 0 80px; position:relative; }
-    .eyebrow { text-transform:uppercase; letter-spacing:.19em; font-size:.72rem; font-weight:800; color:var(--cyan); }
-    h1 { font-size:clamp(3rem, 8vw, 6.8rem); line-height:.99; letter-spacing:-.075em; max-width:950px; margin:25px auto; }
-    .gradient { background:linear-gradient(100deg,#fff 10%,#c5b7ff 48%,#67e8f9 90%); -webkit-background-clip:text; background-clip:text; color:transparent; }
-    .hero p { max-width:710px; margin:0 auto; font-size:clamp(1.05rem,2vw,1.28rem); color:var(--muted); }
-    .actions { display:flex; flex-wrap:wrap; gap:12px; justify-content:center; margin-top:32px; }
-    .btn { display:inline-flex; align-items:center; justify-content:center; gap:9px; padding:13px 20px; border-radius:13px; font-weight:800; font-size:.93rem; transition:transform .2s, opacity .2s; }
-    .btn:hover { transform:translateY(-2px); }
-    .primary { background:linear-gradient(110deg,#b6a3ff,#73e8f5); color:#090c19; box-shadow:0 10px 40px rgba(116,126,255,.2); }
-    .secondary { border:1px solid var(--line); background:rgba(255,255,255,.035); }
-    .orbital { height:180px; max-width:600px; margin:58px auto 0; position:relative; display:grid; place-items:center; }
-    .ring { position:absolute; width:220px; height:220px; border:1px solid rgba(164,151,255,.25); border-radius:50%; }
-    .ring.two { width:330px; height:150px; transform:rotate(-25deg); border-color:rgba(103,232,249,.25); }
-    .ring.three { width:470px; height:100px; transform:rotate(17deg); border-color:rgba(164,151,255,.16); }
-    .core { width:92px; height:92px; border-radius:30px; display:grid; place-items:center; font-size:2rem; background:linear-gradient(135deg,rgba(155,123,255,.95),rgba(103,232,249,.95)); color:#080b16; box-shadow:0 0 75px rgba(135,119,255,.42); z-index:1; transform:rotate(-8deg); }
-    .dot { position:absolute; width:11px; height:11px; border-radius:50%; background:var(--cyan); box-shadow:0 0 20px var(--cyan); }
-    .d1 { top:24px; left:24%; } .d2 { right:20%; top:42px; background:#b69bff; box-shadow:0 0 20px #b69bff; } .d3 { bottom:17px; right:29%; width:7px; height:7px; }
-    section { padding:70px 0; }
-    .section-head { max-width:680px; margin-bottom:30px; }
-    .section-head h2 { font-size:clamp(2rem,4vw,3.4rem); letter-spacing:-.055em; line-height:1.08; margin:12px 0; }
-    .section-head p { color:var(--muted); margin:0; }
-    .grid { display:grid; grid-template-columns:repeat(3,1fr); gap:16px; }
-    .card { padding:25px; border:1px solid var(--line); border-radius:22px; background:linear-gradient(145deg,rgba(25,32,61,.78),rgba(14,18,35,.62)); min-height:210px; }
-    .icon { width:43px; height:43px; border-radius:14px; display:grid; place-items:center; background:rgba(155,123,255,.13); color:#c9bcff; font-size:1.25rem; margin-bottom:20px; }
-    .card h3 { margin:0 0 8px; font-size:1.12rem; }
-    .card p { color:var(--muted); margin:0; font-size:.94rem; }
-    .manifesto { padding:clamp(28px,5vw,58px); border:1px solid rgba(155,123,255,.25); border-radius:28px; background:linear-gradient(120deg,rgba(106,79,212,.15),rgba(38,179,202,.07)); }
-    .manifesto blockquote { margin:0; max-width:900px; font-size:clamp(1.5rem,3.5vw,2.8rem); font-weight:750; letter-spacing:-.045em; line-height:1.25; }
-    .manifesto p { color:var(--muted); max-width:800px; margin:22px 0 0; }
-    .quote-mark { color:var(--cyan); font-size:2rem; margin-bottom:10px; }
-    .roadmap { display:grid; grid-template-columns:repeat(3,1fr); gap:14px; counter-reset:step; }
-    .step { border-top:1px solid var(--line); padding:22px 8px 0 0; }
-    .step:before { counter-increment:step; content:"0" counter(step); display:block; color:var(--cyan); font-weight:850; letter-spacing:.1em; margin-bottom:14px; }
-    .step h3 { margin:0 0 8px; }
-    .step p { margin:0; color:var(--muted); font-size:.94rem; }
-    .cta { text-align:center; padding:55px 25px; border:1px solid var(--line); border-radius:28px; background:radial-gradient(ellipse at 50% 0,rgba(155,123,255,.16),transparent 60%),rgba(255,255,255,.025); }
-    .cta h2 { font-size:clamp(2rem,5vw,3.8rem); letter-spacing:-.06em; line-height:1.05; margin:12px 0; }
-    .cta p { color:var(--muted); max-width:620px; margin:0 auto; }
-    footer { border-top:1px solid var(--line); margin-top:75px; padding:26px 0 35px; display:flex; justify-content:space-between; align-items:center; gap:15px; color:#8f99b5; font-size:.85rem; }
-    footer strong { color:#e5e8f5; }
-    .tiny { font-size:.78rem; color:#8993b0; margin-top:17px; }
-    @media (max-width:760px) {
-      .hero { padding:62px 0 55px; }
-      .grid, .roadmap { grid-template-columns:1fr; }
-      .card { min-height:unset; }
-      .ring.three { width:320px; }
-      .ring.two { width:260px; }
-      footer { flex-direction:column; align-items:flex-start; }
-      .status { font-size:.7rem; }
-    }
-    @media (prefers-reduced-motion: reduce) { html { scroll-behavior:auto; } *,*::before,*::after { transition:none !important; } }
-  </style>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="description" content="Demo do protocolo onpostt: feed, tópicos em alta, notificações, reações, comentários, perfis e mensagens cifradas usando a biblioteca oficial.">
+  <meta name="color-scheme" content="dark">
+  <title>onpostt · demo</title>
+  <link rel="stylesheet" href="/css/site.css">
+  <link rel="stylesheet" href="/css/style.css">
 </head>
-<body>
-  <header class="wrap">
-    <a class="brand" href="#" aria-label="Onpostt início"><span class="logo">o</span><span>onpostt<span style="color:#9b7bff">.</span></span></a>
-    <div class="status"><span></span>Em desenvolvimento</div>
+<body class="demo-body">
+  <header class="site-header">
+    <div class="container">
+      <a class="brand" href="/">
+        <span class="brand-mark" aria-hidden="true">o/</span>
+        <span>onpostt</span>
+      </a>
+      <nav class="site-nav demo-nav" aria-label="Seções do demo">
+        <button type="button" class="nav-button active" data-view="feed">Inicio</button>
+        <button type="button" class="nav-button" data-view="notifications">Notificações <span class="nav-badge" id="notification-badge" aria-live="polite" hidden>0</span></button>
+        <button type="button" class="nav-button" data-view="profiles">Perfis</button>
+        <button type="button" class="nav-button" data-view="chat">Conversas <span class="nav-badge" id="message-badge" aria-live="polite" hidden>0</span></button>
+        <button type="button" class="nav-button" data-view="about">Sobre</button>
+      </nav>
+      <div class="demo-identity">
+        <span class="pill" id="net-status"><span class="status-dot" aria-hidden="true"></span><span id="net-label">conectando</span></span>
+        <button type="button" class="btn btn-small btn-ghost mono" id="identity-button" title="Ver chave da sessão">—</button>
+      </div>
+    </div>
   </header>
 
-  <main>
-    <section class="hero wrap">
-      <div class="eyebrow">Uma nova forma de estar conectado</div>
-      <h1>A internet pode ser <span class="gradient">mais livre.</span></h1>
-      <p>A Onpostt está sendo construída para uma nova experiência social: mais autonomia, conexões reais e uma comunidade onde sua voz importa — sem deixar seus dados nas mãos de interesses que você não controla.</p>
-      <div class="actions">
-        <a class="btn primary" href="#visao">Conheça nossa visão <span aria-hidden="true">↗</span></a>
-        <a class="btn secondary" href="#futuro">O que estamos construindo</a>
-      </div>
-      <div class="orbital" aria-hidden="true">
-        <div class="ring"></div><div class="ring two"></div><div class="ring three"></div>
-        <span class="dot d1"></span><span class="dot d2"></span><span class="dot d3"></span>
-        <div class="core">♡</div>
-      </div>
-      <div class="tiny">Não é só mais uma rede social. É uma nova ideia de conexão.</div>
-    </section>
+  <main class="container demo-main">
 
-    <section class="wrap" id="visao">
-      <div class="section-head">
-        <div class="eyebrow">Nossa ideia</div>
-        <h2>Você merece uma rede que respeite as pessoas.</h2>
-        <p>A tecnologia deve aproximar pessoas — não transformar cada interação em produto. Estamos trabalhando para que a Onpostt coloque a experiência das pessoas no centro.</p>
+    <section class="demo-view" id="view-feed" aria-labelledby="feed-title">
+      <div class="demo-head">
+        <button type="button" class="btn btn-small" id="refresh-feed" style="display:none;">Atualizar</button>
       </div>
-      <div class="grid">
-        <article class="card">
-          <div class="icon">◈</div>
-          <h3>Mais liberdade para se expressar</h3>
-          <p>Um espaço pensado para conversas abertas e diferentes pontos de vista, com regras transparentes contra abusos, ameaças e conteúdos ilegais.</p>
-        </article>
-        <article class="card">
-          <div class="icon">⌘</div>
-          <h3>Seus dados merecem respeito</h3>
-          <p>Privacidade e transparência como princípios de projeto. Queremos reduzir a coleta desnecessária e dar clareza sobre como as informações são utilizadas.</p>
-        </article>
-        <article class="card">
-          <div class="icon">♡</div>
-          <h3>Pessoas antes de algoritmos</h3>
-          <p>Comunidades, interesses em comum e conexões significativas — não apenas métricas de engajamento ou horas intermináveis diante da tela.</p>
-        </article>
-      </div>
-    </section>
 
-    <section class="wrap">
-      <div class="manifesto">
-        <div class="quote-mark">“</div>
-        <blockquote>Uma internet onde você possa ser você. Onde a conversa vale mais que o alcance, a comunidade vale mais que os números e a liberdade vem acompanhada de responsabilidade.</blockquote>
-        <p>Acreditamos que uma rede social melhor começa com uma pergunta simples: e se a tecnologia voltasse a trabalhar a favor das pessoas?</p>
-      </div>
-    </section>
+      <div class="feed-layout">
+        <div class="feed-main">
+          <div class="feed-tabs" role="tablist" aria-label="Filtro do feed">
+            <button type="button" class="feed-tab active" data-feed-mode="global" role="tab" aria-selected="true">Global</button>
+            <button type="button" class="feed-tab" data-feed-mode="following" role="tab" aria-selected="false">Seguindo</button>
+          </div>
 
-    <section class="wrap" id="futuro">
-      <div class="section-head">
-        <div class="eyebrow">O próximo capítulo</div>
-        <h2>Estamos preparando algo diferente.</h2>
-        <p>A Onpostt está em desenvolvimento. Estamos construindo com cuidado a base de uma experiência social moderna, acessível e feita para evoluir junto com sua comunidade.</p>
-      </div>
-      <div class="roadmap">
-        <div class="step">
-          <h3>Uma experiência nova</h3>
-          <p>Uma interface atual, intuitiva e adaptada para funcionar bem no computador e no celular.</p>
+          <form class="card compose" id="compose-form" autocomplete="off">
+            <label class="field">
+              <span>Novo post</span>
+              <textarea class="textarea" id="post-content" maxlength="4000" placeholder="O que está acontecendo no protocolo? Você também pode anexar uma foto e adicionar tópicos."></textarea>
+            </label>
+            <div class="compose-topics">
+              <label class="field">
+                <span>Tópicos</span>
+                <input class="input" id="post-topic-input" maxlength="50" placeholder="onpostt" autocomplete="off" spellcheck="false">
+              </label>
+              <button type="button" class="btn btn-small" id="add-post-topic">Adicionar</button>
+            </div>
+            <div class="topic-chips compose-topic-chips" id="compose-topic-chips" hidden></div>
+            <p class="faint small compose-topic-hint">Até 5 tópicos por post. Um tópico novo é criado quando você publica com ele.</p>
+            <div class="compose-media">
+              <label class="btn btn-small file-button">
+                Adicionar foto
+                <input type="file" id="post-image" accept="image/jpeg,image/png" hidden>
+              </label>
+              <span class="faint small" id="image-hint">JPEG ou PNG, redimensionada no navegador para até 500px.</span>
+            </div>
+            <div class="image-preview" id="image-preview" hidden>
+              <img id="image-preview-img" alt="Prévia da foto selecionada">
+              <div class="image-preview-info">
+                <span class="small" id="image-meta"></span>
+                <button type="button" class="btn btn-small" id="remove-image">Remover</button>
+              </div>
+            </div>
+            <div class="form-actions">
+              <button type="submit" class="btn btn-primary" id="publish-button">Publicar</button>
+              <span class="faint small" id="compose-hint">Assinado com sua chave local.</span>
+            </div>
+          </form>
+
+          <div class="topic-filter" id="active-topic" hidden>
+            <div>
+              <span class="faint small">Filtrando por</span>
+              <strong id="active-topic-name">#tópico</strong>
+              <span class="faint small" id="active-topic-count"></span>
+            </div>
+            <button type="button" class="btn btn-small btn-ghost" id="clear-topic">Limpar</button>
+          </div>
+
+          <div class="feed" id="feed-list" aria-live="polite"></div>
+          <div class="empty-state" id="feed-empty" hidden>
+            <p id="feed-empty-title">Nenhum post ainda.</p>
+            <p class="muted small" id="feed-empty-note">Publique o primeiro bloco para ver o protocolo em ação.</p>
+          </div>
         </div>
-        <div class="step">
-          <h3>Comunidades de verdade</h3>
-          <p>Ferramentas para compartilhar ideias, descobrir pessoas e participar de conversas que importam.</p>
-        </div>
-        <div class="step">
-          <h3>Transparência como base</h3>
-          <p>Uma visão de produto que prioriza clareza, controle do usuário e decisões responsáveis sobre dados.</p>
-        </div>
+
+        <aside class="card trending-panel" aria-labelledby="trending-title">
+          <div class="trending-head">
+            <div>
+              <h2 id="trending-title" class="h3">Em alta</h2>
+              <p class="faint small mb-0">Últimos 7 dias</p>
+            </div>
+            <button type="button" class="btn btn-small btn-ghost" id="refresh-trending">Atualizar</button>
+          </div>
+          <ol class="trending-list" id="trending-list" aria-live="polite"></ol>
+          <p class="trending-empty faint small" id="trending-empty" hidden>Carregando tópicos…</p>
+          <p class="faint small" id="trending-status" aria-live="polite"></p>
+          <div class="trending-note">
+            <strong>Crie um tópico</strong>
+            <p class="faint small mb-0">
+              Adicione um nome em <em>Tópicos</em> ao publicar. Qualquer pessoa
+              pode criar e usar tópicos; o ranking conta posts distintos.
+            </p>
+          </div>
+        </aside>
       </div>
     </section>
 
-    <section class="wrap">
-      <div class="cta">
-        <div class="eyebrow">O futuro está sendo construído</div>
-        <h2>Uma nova experiência.<br><span class="gradient">Novas possibilidades.</span></h2>
-        <p>A Onpostt ainda está tomando forma. Em breve, queremos abrir as portas para você conhecer essa nova maneira de se conectar. A internet também pode ser aquilo que fazemos dela, juntos.</p>
-        <div class="actions"><a class="btn primary" href="mailto:contato@onpostt.com?subject=Quero%20saber%20mais%20sobre%20a%20Onpostt">Quero saber mais <span aria-hidden="true">→</span></a></div>
-        <div class="tiny">Este site é uma apresentação do projeto. O lançamento ainda não foi anunciado.</div>
+    <section class="demo-view" id="view-notifications" aria-labelledby="notifications-title" hidden>
+      <div class="demo-head">
+        <div>
+          <h1 id="notifications-title">Notificações</h1>
+        </div>
+        <div class="notification-actions">
+          <button type="button" class="btn btn-small" id="refresh-notifications">Atualizar</button>
+          <button type="button" class="btn btn-small btn-ghost" id="mark-notifications-read">Marcar como lidas</button>
+          <button type="button" class="btn btn-small btn-ghost" id="toggle-read-notifications" aria-pressed="false">Mostrar lidas</button>
+        </div>
+      </div>
+
+      <div class="notification-list" id="notification-list" aria-live="polite"></div>
+      <div class="empty-state" id="notifications-empty" hidden>
+        <p>Nenhuma notificação.</p>
+        <p class="muted small">Quando alguém curtir, reagir ou comentar em um bloco seu, a interação aparecerá aqui.</p>
+      </div>
+    </section>
+
+    <section class="demo-view" id="view-profiles" aria-labelledby="profiles-title" hidden>
+      <div class="demo-head">
+        <div>
+          <h1 id="profiles-title">Perfis</h1>
+        </div>
+        <button type="button" class="btn btn-small" id="refresh-profiles">Atualizar</button>
+      </div>
+
+      <form class="card" id="profile-form" autocomplete="off">
+        <h2 class="h3">Seu perfil</h2>
+        <div class="profile-photo-editor">
+          <div class="avatar avatar-large" id="profile-photo-preview" aria-label="Foto do perfil"></div>
+          <div class="profile-photo-actions">
+            <span class="field-label">Foto do perfil</span>
+            <div class="form-actions">
+              <label class="btn btn-small file-button">
+                Adicionar foto
+                <input type="file" id="profile-image" accept="image/jpeg,image/png" hidden>
+              </label>
+              <button type="button" class="btn btn-small btn-ghost" id="remove-profile-image" hidden>Remover foto</button>
+            </div>
+            <span class="faint small" id="profile-image-hint">JPEG ou PNG</span>
+          </div>
+        </div>
+        <div class="form-row">
+          <label class="field">
+            <span>Nome</span>
+            <input class="input" id="profile-name" maxlength="60" placeholder="Seu nome">
+          </label>
+          <label class="field">
+            <span>Bio</span>
+            <input class="input" id="profile-bio" maxlength="160" placeholder="Uma frase sobre você">
+          </label>
+        </div>
+        <div class="form-actions">
+          <button type="submit" class="btn btn-primary" id="save-profile">Salvar perfil</button>
+          <span class="faint small">Publicado como bloco assinado.</span>
+        </div>
+      </form>
+
+      <section class="card profile-search" aria-labelledby="profiles-search-title">
+        <label class="field">
+          <span id="profiles-search-title">Buscar usuário</span>
+          <input class="input" id="profiles-search" type="search" placeholder="Nome ou pubkey" autocomplete="off" spellcheck="false">
+        </label>
+        <p class="faint small mb-0">A busca compara o nome do perfil e a pubkey, sem diferenciar maiúsculas de minúsculas.</p>
+      </section>
+
+      <div class="profile-grid" id="profiles-list" aria-live="polite"></div>
+      <div class="empty-state" id="profiles-empty" hidden>
+        <p>Nenhum perfil encontrado.</p>
+        <p class="muted small">Salve o seu perfil e ele aparecerá aqui.</p>
+      </div>
+    </section>
+
+    <section class="demo-view" id="view-chat" aria-labelledby="chat-title" hidden>
+      <div class="demo-head">
+        <div>
+          <h1 id="chat-title">Conversas</h1>
+          <p class="muted">Mensagens cifradas de ponta a ponta. Abrir uma conversa registra a leitura no relay.</p>
+        </div>
+      </div>
+
+      <div class="chat-layout">
+        <aside class="card chat-contacts">
+          <h2 class="h3">Abrir conversa</h2>
+          <form class="chat-open" id="open-chat-form" autocomplete="off">
+            <label class="field">
+              <span>Pubkey do contato</span>
+              <input class="input mono" id="peer-input" placeholder="03… ou 04…" spellcheck="false">
+            </label>
+            <button type="submit" class="btn btn-primary btn-small">Abrir</button>
+          </form>
+          <div class="divider"></div>
+          <h3 class="contact-title">Suas conversas</h3>
+          <p class="faint small">Somente conversas enviadas ou recebidas por você. O número indica mensagens não lidas.</p>
+          <div class="contact-list" id="contact-list"></div>
+        </aside>
+
+        <section class="card chat-panel">
+          <div class="chat-head">
+            <div>
+              <strong id="chat-peer-label">Nenhuma conversa</strong>
+              <p class="faint small mono truncate mb-0" id="chat-peer-key">Escolha um contato ao lado</p>
+            </div>
+            <div class="chat-head-actions">
+              <button type="button" class="btn btn-small btn-ghost" id="refresh-chat" disabled>Atualizar</button>
+              <button type="button" class="btn btn-small btn-ghost" id="delete-chat" disabled>Apagar conversa</button>
+            </div>
+          </div>
+          <div class="chat-messages" id="chat-messages" aria-live="polite">
+            <p class="empty-state-inline">Abra uma conversa para começar.</p>
+          </div>
+          <form class="chat-form" id="chat-form" autocomplete="off">
+            <div class="chat-compose">
+              <input class="input" id="chat-input" placeholder="Escreva uma mensagem cifrada…" maxlength="4000" disabled>
+              <button type="submit" class="btn btn-primary" id="chat-send" disabled>Enviar</button>
+            </div>
+            <div class="chat-tools">
+              <label class="btn btn-small btn-ghost chat-file-label" for="chat-image">Imagem</label>
+              <input id="chat-image" type="file" accept="image/jpeg,image/png" disabled hidden>
+              <button type="button" class="btn btn-small btn-ghost" id="chat-audio" disabled>Gravar áudio</button>
+              <span class="faint small chat-media-hint" id="chat-media-hint">Imagem até 500px · áudio até 15s.</span>
+            </div>
+          </form>
+        </section>
+      </div>
+    </section>
+
+    <section class="demo-view" id="view-about" aria-labelledby="about-title" hidden>
+      <div class="demo-head">
+        <div>
+          <h1 id="about-title">Sobre este demo</h1>
+          <p class="muted">Uma aplicação pequena, construída somente com a biblioteca oficial.</p>
+        </div>
+      </div>
+
+      <div class="grid grid-2">
+        <div class="card">
+          <h2 class="h3">O que está acontecendo</h2>
+          <ul class="about-list">
+            <li><strong>Identidade:</strong> par secp256k1 gerado no navegador.</li>
+            <li><strong>Feed:</strong> blocos <code>post</code> assinados, reposts com atribuição e abas Global/Seguindo.</li>
+            <li><strong>Tópicos:</strong> metadados opcionais no <code>post</code>, filtráveis e ranqueados por <code>GET /api/trending</code>. Tópicos são criados pelo primeiro post que os usa.</li>
+            <li><strong>Perfis:</strong> blocos <code>profile</code>; o relay retorna o mais recente por pubkey.</li>
+            <li><strong>Curtidas/reações/reposts:</strong> blocos <code>like</code>, <code>reaction</code> e <code>repost</code> com toggle por autor e alvo.</li>
+            <li><strong>Comentários/respostas:</strong> blocos <code>comment</code> com <code>parent</code> opcional para responder.</li>
+            <li><strong>Notificações:</strong> blocos <code>notification</code> apontam para a interação assinada e para o bloco do destinatário.</li>
+            <li><strong>Leitura:</strong> blocos <code>notification_read</code> e <code>message_read</code> registram, pela pubkey, o que já foi lido.</li>
+            <li><strong>Conversas:</strong> <code>message</code> via WebSocket, ECDH efêmero + AES-256-GCM, com imagem redimensionada e áudio de até 15s no envelope cifrado.</li>
+          </ul>
+        </div>
+        <div class="card">
+          <h2 class="h3">Limites conscientes</h2>
+          <ul class="about-list">
+            <li>Metadados de conversa (quem, quando) são visíveis ao relay.</li>
+            <li>Não há descoberta global: os contatos vêm dos perfis deste relay.</li>
+            <li>O demo usa a mesma origem do relay; para outro host, ajuste <code>ORIGIN</code> e <code>WS_URL</code> em <code>app.js</code>.</li>
+            <li>A chave fica em <code>sessionStorage</code> e a sessão persistente usa uma chave AES não exportável no IndexedDB, com validade de 30 dias.</li>
+            <li>O cofre exportado é cifrado com PBKDF2-SHA-256 e AES-256-GCM; a senha não é armazenada.</li>
+          </ul>
+          <div class="form-actions mt-2">
+            <button type="button" class="btn btn-small" id="about-identity">Ver chave e cofre</button>
+            <a class="btn btn-small btn-ghost" href="/doc.html">Ler a documentação</a>
+          </div>
+        </div>
+      </div>
+
+      <div class="callout mt-3">
+        <strong>Privacidade por design:</strong> a chave privada nunca entra no
+        corpo de um bloco nem em um filtro. A biblioteca a usa apenas para
+        assinar e para derivar segredos localmente.
       </div>
     </section>
   </main>
 
-  <footer class="wrap">
-    <a class="brand" href="#"><span class="logo">o</span><span>onpostt<span style="color:#9b7bff">.</span></span></a>
-    <span>Uma internet mais livre, humana e conectada.</span>
-    <span>© <span id="year">2026</span> Onpostt</span>
-  </footer>
-  <script>
-    document.getElementById('year').textContent = new Date().getFullYear();
-  </script>
+  <dialog id="key-dialog" class="key-dialog" aria-labelledby="key-title">
+    <form method="dialog" class="key-dialog-body">
+      <h2 id="key-title">Chave e cofre</h2>
+      <p class="muted small">
+        Copie a chave apenas se souber o que está fazendo. Qualquer script na
+        página pode lê-la. Para transportar a identidade, prefira o cofre
+        cifrado.
+      </p>
+      <label class="field">
+        <span>Pubkey</span>
+        <input class="input mono" id="key-public" readonly>
+      </label>
+      <label class="field">
+        <span>Private key</span>
+        <textarea class="textarea mono" id="key-private" readonly rows="2"></textarea>
+      </label>
+      <label class="field">
+        <span>Senha para exportar o cofre</span>
+        <input class="input" id="export-password" type="password" minlength="10" maxlength="256" autocomplete="new-password" placeholder="Mínimo de 10 caracteres">
+      </label>
+      <p class="faint small">
+        A senha não é armazenada. O arquivo baixado contém a chave privada
+        cifrada com AES-256-GCM e PBKDF2-SHA-256.
+      </p>
+      <div class="form-actions">
+        <button type="button" class="btn btn-small" id="copy-private">Copiar chave</button>
+        <button type="button" class="btn btn-small btn-ghost" id="export-identity">Exportar cofre cifrado</button>
+        <button type="button" class="btn btn-small btn-danger" id="logout-identity">Sair</button>
+        <span class="spacer"></span>
+        <button type="submit" class="btn btn-small">Fechar</button>
+      </div>
+    </form>
+  </dialog>
+
+  <div class="toast-stack" id="toast-stack" aria-live="polite" aria-atomic="false"></div>
+
+  <script src="js/onpostt.min.js" defer></script>
+  <script src="js/auth.js" defer></script>
+  <script src="js/app.js" defer></script>
 </body>
 </html>

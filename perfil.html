@@ -1,0 +1,228 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="description" content="Perfil público do onpostt: identidade, bio, publicações, reposts, seguidores e interações de um usuário.">
+  <meta name="color-scheme" content="dark">
+  <title>onpostt · perfil</title>
+  <link rel="stylesheet" href="css/site.css">
+  <link rel="stylesheet" href="css/perfil.css">
+  <link rel="stylesheet" href="css/style.css">
+</head>
+<body class="profile-body">
+  <header class="site-header">
+    <div class="container">
+      <a class="brand" href="/">
+        <span class="brand-mark" aria-hidden="true">o/</span>
+        <span>onpostt</span>
+      </a>
+      <nav class="site-nav demo-nav" aria-label="Seções do demo">
+        <button type="button" class="nav-button" data-view="feed">Inicio</button>
+        <button type="button" class="nav-button active" data-view="profile">Perfil</button>
+        <button type="button" class="nav-button" data-view="notifications">Notificações <span class="nav-badge" id="notification-badge" aria-live="polite" hidden>0</span></button>
+        <button type="button" class="nav-button" data-view="profiles">Perfis</button>
+        <button type="button" class="nav-button" data-view="chat">Conversas <span class="nav-badge" id="message-badge" aria-live="polite" hidden>0</span></button>
+        <button type="button" class="nav-button" data-view="about">Sobre</button>
+      </nav>
+      <div class="demo-identity">
+        <span class="pill" id="net-status"><span class="status-dot" aria-hidden="true"></span><span id="net-label">conectando</span></span>
+        <button type="button" class="btn btn-small btn-ghost mono" id="identity-button" title="Ver chave da sessão">—</button>
+      </div>
+    </div>
+  </header>
+
+  <main class="container profile-page" id="profile-page">
+
+    <section class="card profile-search-card" aria-labelledby="profile-search-title">
+      <h2 id="profile-search-title">Buscar usuário</h2>
+      <p class="muted small">Digite um nome de perfil ou uma pubkey pública completa ou parcial.</p>
+      <form class="profile-search-form" id="profile-search-form" autocomplete="off">
+        <label class="sr-only" for="profile-search-input">Nome ou pubkey</label>
+        <input class="input" id="profile-search-input" type="search" spellcheck="false" autocomplete="off" placeholder="Nome ou pubkey">
+        <button class="btn btn-primary" type="submit" id="profile-search-button">Buscar</button>
+      </form>
+      <div class="profile-search-results" id="profile-search-results" aria-live="polite" hidden></div>
+    </section>
+
+    <section class="card profile-loading" id="profile-loading" aria-live="polite">
+      Carregando perfil…
+    </section>
+
+    <section class="card profile-message" id="profile-message" role="alert" hidden></section>
+
+    <section class="card profile-blocked" id="profile-blocked" hidden>
+      <h2>Perfil indisponível</h2>
+      <p class="muted">
+        Este perfil não está disponível para a sua identidade neste navegador.
+      </p>
+    </section>
+
+    <section id="profile-view" hidden>
+      <div class="card profile-hero">
+        <div class="profile-avatar" id="profile-avatar" aria-hidden="true"></div>
+        <div class="profile-hero-body">
+          <div class="profile-title-row">
+            <h1 id="profile-display-name">Perfil</h1>
+            <span class="pill pill-accent" id="profile-self" hidden>você</span>
+          </div>
+          <p class="profile-bio" id="profile-bio-text">Sem bio.</p>
+          <div class="profile-pubkey-row">
+            <code class="mono" id="profile-pubkey"></code>
+            <button type="button" class="btn btn-small btn-ghost" id="copy-pubkey">Copiar pubkey</button>
+          </div>
+          <div class="profile-hero-actions">
+            <button type="button" class="btn btn-small btn-primary" id="profile-follow" aria-pressed="false" hidden>Seguir</button>
+            <button type="button" class="btn btn-small btn-primary" id="profile-chat" hidden>Conversar</button>
+            <button type="button" class="btn btn-small btn-ghost" id="profile-block" hidden>Bloquear</button>
+            <a class="btn btn-small btn-ghost" id="profile-edit-link" href="/?view=profiles" hidden>Editar perfil</a>
+          </div>
+          <p class="profile-action-note" id="profile-action-note" hidden></p>
+        </div>
+      </div>
+
+      <dl class="card profile-stats" aria-label="Resumo do perfil">
+        <div><dt>Publicações</dt><dd id="stat-posts">0</dd></div>
+        <div><dt>Curtidas</dt><dd id="stat-likes">0</dd></div>
+        <div><dt>Comentários</dt><dd id="stat-comments">0</dd></div>
+        <div><dt>Reposts</dt><dd id="stat-reposts">0</dd></div>
+        <div><dt>Seguidores</dt><dd id="stat-followers">0</dd></div>
+        <div><dt>Seguindo</dt><dd id="stat-following">0</dd></div>
+      </dl>
+
+      <section class="profile-posts-section" aria-labelledby="profile-posts-title">
+        <div class="profile-section-head">
+          <div>
+            <h2 id="profile-posts-title">Publicações</h2>
+          </div>
+          <button type="button" class="btn btn-small" id="refresh-profile">Atualizar</button>
+        </div>
+        <div class="profile-posts" id="profile-posts" aria-live="polite"></div>
+        <div class="card empty-state" id="profile-posts-empty" hidden>
+          <p>Nenhuma publicação ainda.</p>
+          <p class="muted small">Quando este usuário publicar, o conteúdo aparecerá aqui.</p>
+        </div>
+      </section>
+    </section>
+  </main>
+
+  <!-- O app completo do index.html é montado aqui quando há uma sessão ativa. -->
+  <div id="app-shell"></div>
+
+  <script src="js/onpostt.min.js" defer></script>
+  <script src="js/auth.js" defer></script>
+  <script>
+    /*
+     * Reaproveita o app do index.html (feed, notificações, perfis, conversas e
+     * sobre) sem duplicar o HTML nem o JavaScript do chat. Com sessão ativa, o
+     * shell de /index.html é importado, o app.js roda nesta página e o
+     * perfil.js cuida somente do perfil. Sem sessão, o perfil continua público
+     * e somente leitura.
+     */
+    (function () {
+      var APP_VIEWS = ['feed', 'profiles', 'notifications', 'chat', 'about'];
+
+      function byId(id) {
+        return document.getElementById(id);
+      }
+
+      function removeShell() {
+        var shell = byId('app-shell');
+        if (shell) shell.textContent = '';
+      }
+
+      function loadScript(src) {
+        return new Promise(function (resolve, reject) {
+          var script = document.createElement('script');
+          script.src = src;
+          script.async = false;
+          script.onload = function () { resolve(); };
+          script.onerror = function () { reject(new Error('Falha ao carregar ' + src)); };
+          document.body.appendChild(script);
+        });
+      }
+
+      function wait(ms) {
+        return new Promise(function (resolve) { setTimeout(resolve, ms); });
+      }
+
+      async function sessionExists() {
+        if (!window.onposttAuth) return false;
+        try {
+          return Boolean(await window.onposttAuth.ensureSession());
+        } catch (error) {
+          return false;
+        }
+      }
+
+      async function injectShell() {
+        var response = await fetch('/index.html', { cache: 'no-store' });
+        if (!response.ok) throw new Error('HTTP ' + response.status);
+
+        var doc = new DOMParser().parseFromString(await response.text(), 'text/html');
+        var main = doc.querySelector('main.demo-main');
+        var dialog = doc.getElementById('key-dialog');
+        var toasts = doc.getElementById('toast-stack');
+        if (!main || !dialog || !toasts) throw new Error('shell do app não encontrado');
+
+        main.querySelectorAll('.demo-view').forEach(function (view) {
+          view.hidden = true;
+        });
+        main.hidden = true;
+
+        var shell = byId('app-shell');
+        shell.appendChild(main);
+        shell.appendChild(dialog);
+        shell.appendChild(toasts);
+      }
+
+      async function showInitialView(view) {
+        var section = byId('view-' + view);
+        if (!section) return;
+
+        for (var attempt = 0; attempt < 120; attempt += 1) {
+          if (!section.hidden) {
+            byId('profile-page').hidden = true;
+            byId('app-shell').querySelector('.demo-main').hidden = false;
+            return;
+          }
+          await wait(100);
+        }
+      }
+
+      async function boot() {
+        var params = new URLSearchParams(window.location.search);
+        var requested = params.get('view');
+        var initialView = APP_VIEWS.indexOf(requested) !== -1 ? requested : '';
+
+        if (await sessionExists()) {
+          try {
+            await injectShell();
+            await loadScript('js/app.js');
+            if (initialView) showInitialView(initialView);
+          } catch (error) {
+            removeShell();
+            if (window.console && typeof window.console.warn === 'function') {
+              window.console.warn('App completo indisponível no perfil:', error.message);
+            }
+          }
+        }
+
+        try {
+          await loadScript('js/perfil.js');
+        } catch (error) {
+          var loading = byId('profile-loading');
+          if (loading) loading.hidden = true;
+          var message = byId('profile-message');
+          if (message) {
+            message.textContent = 'Não foi possível carregar a página do perfil.';
+            message.hidden = false;
+          }
+        }
+      }
+
+      document.addEventListener('DOMContentLoaded', boot);
+    })();
+  </script>
+</body>
+</html>

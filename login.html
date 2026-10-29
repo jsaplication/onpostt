@@ -1,0 +1,122 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="description" content="Entrar na rede demo onpostt com chave privada local ou cofre de identidade cifrado.">
+  <meta name="color-scheme" content="dark">
+  <meta name="robots" content="noindex">
+  <title>onpostt · entrar</title>
+  <link rel="stylesheet" href="css/site.css">
+  <link rel="stylesheet" href="css/auth.css">
+</head>
+<body class="auth-body">
+  <header class="site-header">
+    <div class="container">
+      <a class="brand" href="/">
+        <span class="brand-mark" aria-hidden="true">o/</span>
+        <span>onpostt</span>
+        <small>entrar</small>
+      </a>
+      <nav class="site-nav" aria-label="Navegação principal">
+        <a href="/">Início</a>
+        <a href="/cadastro.html">Criar conta</a>
+      </nav>
+    </div>
+  </header>
+
+  <main class="container auth-main">
+    <div class="auth-layout">
+      <section class="auth-copy" aria-labelledby="login-page-title">
+        <span class="pill pill-accent">SEJA LIVRE</span>
+        <h1 id="login-page-title">Sua chave, seu acesso.</h1>
+        <p class="muted">
+          O onpostt não tem conta central. Entrar significa desbloquear, neste
+          navegador, a chave privada que assina seus blocos.
+        </p>
+        <ul class="auth-points">
+          <li>A senha nunca é enviada ao relay.</li>
+          <li>O cofre <code>.json</code> usa AES-256-GCM e PBKDF2-SHA-256.</li>
+          <li>A sessão pode ser mantida por 30 dias neste dispositivo.</li>
+          <li>A chave privada não é gravada em <code>localStorage</code>.</li>
+        </ul>
+        <div class="callout warn">
+          <strong>Sem recuperação central.</strong> Quem tiver a chave privada
+          ou o cofre com a senha controla a identidade. O relay não consegue
+          redefinir sua senha.
+        </div>
+      </section>
+
+      <section class="card auth-card" aria-labelledby="login-title">
+        <div class="auth-head">
+          <h2 id="login-title">Entrar</h2>
+          <p class="muted small">Escolha como provar sua identidade.</p>
+        </div>
+
+        <div class="auth-notice" id="login-notice" role="status" hidden></div>
+        <div class="auth-alert" id="login-error" role="alert" hidden></div>
+
+        <div class="auth-tabs" role="tablist" aria-label="Forma de entrada">
+          <button type="button" class="auth-tab active" id="tab-key" role="tab" aria-selected="true" aria-controls="key-panel" data-auth-tab="key">Chave privada</button>
+          <button type="button" class="auth-tab" id="tab-file" role="tab" aria-selected="false" aria-controls="file-panel" data-auth-tab="file">Arquivo .json</button>
+        </div>
+
+        <form class="auth-panel" id="key-panel" role="tabpanel" aria-labelledby="tab-key" autocomplete="off">
+          <label class="field">
+            <span>Chave privada</span>
+            <textarea class="textarea mono" id="private-key" rows="3" maxlength="256" spellcheck="false" autocomplete="off" placeholder="64 caracteres hexadecimais"></textarea>
+          </label>
+          <label class="field">
+            <span>Nome de usuário (opcional)</span>
+            <input class="input" id="key-username" type="text" maxlength="40" autocomplete="off" spellcheck="false" placeholder="Nome exibido no perfil">
+          </label>
+          <p class="faint small auth-hint">O nome de usuário é local; não é um login único no relay. Se deixar vazio, o perfil existente ou a pubkey será usado.</p>
+          <label class="check">
+            <input type="checkbox" id="key-remember" checked>
+            <span>Manter sessão neste dispositivo por <strong>30 dias</strong></span>
+          </label>
+          <div class="form-actions">
+            <button class="btn btn-primary" type="submit" id="key-submit">Entrar com chave</button>
+            <span class="faint small">A chave fica apenas neste navegador.</span>
+          </div>
+        </form>
+
+        <form class="auth-panel" id="file-panel" role="tabpanel" aria-labelledby="tab-file" autocomplete="off" hidden>
+          <label class="field">
+            <span>Cofre cifrado (.json)</span>
+            <input class="input" id="vault-file" type="file" accept=".json,application/json">
+          </label>
+          <div class="auth-file-info" id="file-info" role="status" hidden></div>
+          <label class="field">
+            <span>Senha do cofre</span>
+            <input class="input" id="vault-password" type="password" maxlength="256" autocomplete="current-password" placeholder="Senha definida no cadastro">
+          </label>
+          <label class="check">
+            <input type="checkbox" id="file-remember" checked>
+            <span>Manter sessão neste dispositivo por <strong>30 dias</strong></span>
+          </label>
+          <div class="form-actions">
+            <button class="btn btn-primary" type="submit" id="file-submit" disabled>Desbloquear e entrar</button>
+          </div>
+          <p class="faint small">O arquivo é lido no navegador. A senha não sai do dispositivo e não é armazenada.</p>
+        </form>
+
+        <p class="auth-switch">Ainda não tem uma identidade? <a href="/cadastro.html">Criar cadastro</a>.</p>
+      </section>
+    </div>
+  </main>
+
+  <footer class="site-footer">
+    <div class="container">
+      <span>onpostt · sua liberdade de expressão importa</span>
+      <span><a href="/doc.html">Documentação</a></span>
+    </div>
+  </footer>
+
+  <div class="toast-stack" id="toast-stack" aria-live="polite" aria-atomic="false"></div>
+
+  <script src="js/onpostt.min.js" defer></script>
+  <script src="js/auth.js" defer></script>
+  <script src="js/login.js" defer></script>
+</body>
+</html>

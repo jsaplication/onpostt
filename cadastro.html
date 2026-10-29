@@ -1,0 +1,139 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="description" content="Criar uma identidade local no onpostt demo com cofre de chaves cifrado por senha.">
+  <meta name="color-scheme" content="dark">
+  <meta name="robots" content="noindex">
+  <title>onpostt · criar conta</title>
+  <link rel="stylesheet" href="css/site.css">
+  <link rel="stylesheet" href="css/auth.css">
+</head>
+<body class="auth-body">
+  <header class="site-header">
+    <div class="container">
+      <a class="brand" href="/">
+        <span class="brand-mark" aria-hidden="true">o/</span>
+        <span>onpostt</span>
+        <small>cadastro</small>
+      </a>
+      <nav class="site-nav" aria-label="Navegação principal">
+        <a href="/">Início</a>
+        <a href="/login.html">Entrar</a>
+      </nav>
+    </div>
+  </header>
+
+  <main class="container auth-main">
+    <div class="auth-layout">
+      <section class="auth-copy" aria-labelledby="register-page-title">
+        <span class="pill pill-accent">SEJA LIVRE</span>
+        <h1 id="register-page-title">Crie sua chave. Leve seu cofre.</h1>
+        <p class="muted">
+          O cadastro gera um par de chaves secp256k1 no navegador. A senha
+          cifra o arquivo que guarda sua chave privada; ela não é enviada ao
+          relay e não pode ser recuperada por ele.
+        </p>
+        <ul class="auth-points">
+          <li>O username é o nome exibido no perfil.</li>
+          <li>O cofre é portátil e pede a senha ao ser importado.</li>
+          <li>Você pode manter a sessão neste dispositivo por 30 dias.</li>
+          <li>Sem o cofre e a senha, a identidade não pode ser recuperada.</li>
+        </ul>
+        <div class="callout warn">
+          <strong>Guarde o download.</strong> O arquivo cifrado é a sua cópia
+          portátil. Ele não fica no servidor e não há e-mail de recuperação.
+        </div>
+      </section>
+
+      <section class="card auth-card" aria-labelledby="register-title">
+        <div class="auth-head">
+          <h2 id="register-title">Criar identidade</h2>
+          <p class="muted small">Tudo acontece localmente, neste navegador.</p>
+        </div>
+
+        <div class="auth-notice" id="register-session-notice" role="status" hidden></div>
+        <div class="auth-alert" id="register-error" role="alert" hidden></div>
+
+        <form id="register-form" autocomplete="off">
+          <label class="field">
+            <span>Nome de usuário</span>
+            <input class="input" id="register-username" type="text" minlength="3" maxlength="40" autocomplete="username" spellcheck="false" placeholder="Como você quer aparecer" required>
+          </label>
+          <p class="faint small auth-hint">Não é um login central. Duas pessoas podem escolher o mesmo nome; a pubkey é a identidade.</p>
+
+          <label class="field">
+            <span>Senha do cofre</span>
+            <input class="input" id="register-password" type="password" minlength="10" maxlength="256" autocomplete="new-password" required>
+          </label>
+          <div class="password-meter weak" id="password-meter" aria-live="polite">
+            <span class="password-meter-bar" aria-hidden="true"></span>
+            <span class="password-meter-text" id="password-meter-text">Use pelo menos 10 caracteres.</span>
+          </div>
+
+          <label class="field">
+            <span>Confirmar senha</span>
+            <input class="input" id="register-password-confirm" type="password" minlength="10" maxlength="256" autocomplete="new-password" required>
+          </label>
+
+          <label class="check">
+            <input type="checkbox" id="register-remember" checked>
+            <span>Manter sessão neste dispositivo por <strong>30 dias</strong></span>
+          </label>
+
+          <div class="form-actions">
+            <button class="btn btn-primary" type="submit" id="register-submit">Gerar chaves e criar cofre</button>
+            <!-- <span class="faint small">PBKDF2-SHA-256 · 600.000 iterações</span> -->
+          </div>
+        </form>
+
+        <section class="auth-success" id="register-success" aria-labelledby="register-success-title" hidden>
+          <h3 id="register-success-title">Identidade criada</h3>
+          <p class="muted small">
+            Baixe o cofre cifrado agora. O download é a única cópia portátil
+            da chave privada.
+          </p>
+          <dl class="auth-summary">
+            <div>
+              <dt>Usuário</dt>
+              <dd id="success-username">—</dd>
+            </div>
+            <div>
+              <dt>Pubkey</dt>
+              <dd class="mono auth-pubkey" id="success-pubkey">—</dd>
+            </div>
+            <div>
+              <dt>Sessão</dt>
+              <dd id="success-session">—</dd>
+            </div>
+          </dl>
+          <div class="form-actions">
+            <button class="btn btn-primary" type="button" id="download-vault">Baixar cofre cifrado</button>
+            <a class="btn" id="continue-demo" href="/">Entrar Agora</a>
+          </div>
+          <p class="faint small" id="success-note">
+            A senha não foi armazenada. Se você perder o cofre e a senha, a
+            identidade não poderá ser recuperada.
+          </p>
+        </section>
+
+        <p class="auth-switch" id="register-switch">Já tem uma identidade? <a href="/login.html">Entrar</a>.</p>
+      </section>
+    </div>
+  </main>
+
+  <footer class="site-footer">
+    <div class="container">
+      <span>onpostt · chaves locais, blocos assinados</span>
+      <span><a href="/doc.html">Documentação</a> · <a href="/login.html">Entrar</a></span>
+    </div>
+  </footer>
+
+  <div class="toast-stack" id="toast-stack" aria-live="polite" aria-atomic="false"></div>
+
+  <script src="js/onpostt.min.js" defer></script>
+  <script src="js/auth.js" defer></script>
+  <script src="js/cadastro.js" defer></script>
+</body>
+</html>
