@@ -198,8 +198,8 @@
           updatePasswordMeter();
 
           try {
-            window.onposttAuth.downloadVault(vault, username);
-            toast('Cofre cifrado baixado. Guarde o arquivo e a senha.');
+            // window.onposttAuth.downloadVault(vault, username);
+            // toast('Cofre cifrado baixado. Guarde o arquivo e a senha.');
           } catch (error) {
             toast('Cofre pronto. Use o botão de download.', true);
           }
