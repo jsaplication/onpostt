@@ -1,0 +1,1039 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="description" content="Documentação do protocolo onpostt: blocos assinados, modos, perfis, notificações, follows, bloqueio, reações, comentários, mensagens cifradas, HTTP, WebSocket e segurança.">
+  <meta name="color-scheme" content="dark">
+  <title>onpostt · documentação</title>
+  <link rel="stylesheet" href="/assets/site.css">
+</head>
+<body>
+  <header class="site-header">
+     <div class="container">
+      <a class="brand" href="/">
+        <span class="brand-mark" aria-hidden="true">o/</span>
+        <span>onpostt</span>
+        <small>relay</small>
+      </a>
+      <nav class="site-nav" aria-label="Navegação principal">
+        <a href="/">Relay</a>
+        <a href="https://onpostt.com">Demo</a>
+        <a href="/api/status">API status</a>
+      </nav>
+    </div>
+  </header>
+
+  <section class="doc-hero">
+    <div class="container">
+      <div class="row mb-2">
+        <span class="pill pill-accent">protocolo onpostt</span>
+        <span class="pill">secp256k1</span>
+        <span class="pill">HTTP + WebSocket</span>
+      </div>
+      <h1>Blocos assinados, feed social e mensagens privadas</h1>
+      <p class="muted doc-lead">
+        Referência rápida do protocolo, da API e da biblioteca oficial. Tudo o que
+        está nesta página pode ser copiado e executado contra o relay local.
+      </p>
+    </div>
+  </section>
+
+  <div class="container doc-layout">
+    <aside class="doc-side" aria-label="Índice">
+      <h2>Protocolo</h2>
+      <a href="#visao">Visão geral</a>
+      <a href="#bloco">Bloco</a>
+      <a href="#assinatura">Id e assinatura</a>
+      <a href="#modos">Modos</a>
+      <a href="#fotos">Fotos</a>
+      <a href="#social">Reações e respostas</a>
+      <a href="#notificacoes">Notificações</a>
+      <a href="#bloqueio">Bloqueio</a>
+      <a href="#perfil-publico">Perfil público</a>
+      <a href="#query">Query e filtros</a>
+      <h2>Transporte</h2>
+      <a href="#http">HTTP</a>
+      <a href="#websocket">WebSocket</a>
+      <a href="#mensagens">Mensagens cifradas</a>
+      <h2>Prática</h2>
+      <a href="#biblioteca">Biblioteca</a>
+      <a href="#seguranca">Segurança</a>
+      <a href="#limites">Limites</a>
+      <a href="#erros">Erros</a>
+    </aside>
+
+    <main class="doc-main">
+      <section class="doc-section" id="visao">
+        <h2>Visão geral</h2>
+        <p>
+          O <strong>onpostt</strong> é um relay para blocos JSON assinados. O
+          cliente gera a chave, assina localmente e envia o bloco por HTTP ou
+          WebSocket. O relay valida assinatura, id, formato, alvo e autoria antes
+          de gravar.
+        </p>
+        <div class="diagram">
+          <div class="diagram-row">
+            <div class="diagram-node"><strong>Cliente</strong><small>chave privada local</small></div>
+            <span class="diagram-arrow">→</span>
+            <div class="diagram-node accent"><strong>Relay</strong><small>valida + grava</small></div>
+            <span class="diagram-arrow">→</span>
+            <div class="diagram-node"><strong>PostgreSQL</strong><small>blocks + processed_blocks</small></div>
+          </div>
+          <div class="diagram-row">
+            <div class="diagram-node"><strong>WebSocket</strong><small>assinaturas ao vivo</small></div>
+            <span class="diagram-arrow">↔</span>
+            <div class="diagram-node"><strong>Fan-out</strong><small>filtro por assinatura</small></div>
+            <span class="diagram-arrow">↔</span>
+            <div class="diagram-node"><strong>Mensagens</strong><small>ciphertext E2E</small></div>
+          </div>
+        </div>
+        <div class="grid grid-2">
+          <div class="card">
+            <h3>O que o relay garante</h3>
+            <ul>
+              <li>assinatura e id conferem com o conteúdo;</li>
+              <li>regras de modo e autoria aplicadas;</li>
+              <li>um id produz efeito no máximo uma vez;</li>
+              <li>fan-out apenas para filtros compatíveis.</li>
+            </ul>
+          </div>
+          <div class="card">
+            <h3>O que ele não faz</h3>
+            <ul>
+              <li>não guarda chave privada;</li>
+              <li>não lê mensagens cifradas;</li>
+              <li>não oferece anonimato nem moderação;</li>
+              <li>não garante entrega ou disponibilidade.</li>
+            </ul>
+          </div>
+        </div>
+      </section>
+
+      <section class="doc-section" id="bloco">
+        <h2>Bloco</h2>
+        <p>
+          Um bloco é um objeto JSON com os campos abaixo. Campos extras são
+          permitidos (até 32 no total) e entram no id e na assinatura.
+        </p>
+        <div class="table-wrap">
+          <table>
+            <thead>
+              <tr><th>Campo</th><th>Tipo</th><th>Regra</th></tr>
+            </thead>
+            <tbody>
+              <tr><td><code>id</code></td><td>string</td><td>SHA-256 hex de 64 caracteres</td></tr>
+              <tr><td><code>pubkey</code></td><td>string</td><td>secp256k1 comprimida (66) ou não comprimida (130)</td></tr>
+              <tr><td><code>created_at</code></td><td>inteiro</td><td>Unix em segundos; sem mais de 600 s no futuro</td></tr>
+              <tr><td><code>mode</code></td><td>string</td><td>um dos modos do protocolo</td></tr>
+              <tr><td><code>query</code></td><td>array</td><td>pares <code>[chave, valor]</code></td></tr>
+              <tr><td><code>content</code></td><td>string | objeto | array</td><td>obrigatório em <code>post</code>, <code>profile</code>, <code>comment</code>, <code>message</code> e recibos de leitura; proibido em <code>notification</code>; em <code>post</code> use <code>{ text?, image, topics? }</code> e no <code>profile</code> use <code>{ name, bio, image? }</code></td></tr>
+              <tr><td><code>app</code></td><td>string</td><td>1–190 caracteres; obrigatório exceto em <code>delete</code></td></tr>
+              <tr><td><code>sig</code></td><td>string</td><td>DER secp256k1 em hexadecimal</td></tr>
+            </tbody>
+          </table>
+        </div>
+        <div class="code-head"><span>JSON</span></div>
+        <pre><code>{
+  "pubkey": "03a1...66-hex...",
+  "created_at": 1760000000,
+  "mode": "post",
+  "query": [["topic", "onpostt"]],
+  "content": "primeiro post",
+  "app": "meu-app",
+  "id": "9f2c...64-hex...",
+  "sig": "3045...der..."
+}</code></pre>
+        <div class="callout">
+          <strong>Ordem importa.</strong> A assinatura cobre
+          <code>JSON.stringify(bloco sem sig)</code>. Não reordene o objeto depois
+          de assinar.
+        </div>
+      </section>
+
+      <section class="doc-section" id="assinatura">
+        <h2>Id e assinatura</h2>
+        <p>
+          O id identifica o conteúdo. A assinatura prova a autoria. Ambos são
+          calculados sobre a serialização exata do bloco.
+        </p>
+        <div class="code-head"><span>JavaScript</span></div>
+        <pre><code>const unsigned = { ...block };
+delete unsigned.id;
+delete unsigned.sig;
+const id = sha256(JSON.stringify(unsigned));
+
+const signed = { ...block };
+delete signed.sig;                 // id permanece
+const msgHash = sha256(JSON.stringify(signed));
+const sig = secp256k1.sign(msgHash, privateKey).toDER('hex');</code></pre>
+        <ul>
+          <li><code>id</code> não entra no cálculo do id; <code>sig</code> também não.</li>
+          <li><code>sig</code> não entra na mensagem assinada; <code>id</code> entra.</li>
+          <li>O relay compara o id calculado com o recebido e verifica a assinatura.</li>
+          <li>A ordem da biblioteca é <code>pubkey, created_at, mode, query, content, app, extras, id, sig</code>.</li>
+        </ul>
+      </section>
+
+      <section class="doc-section" id="modos">
+        <h2>Modos</h2>
+        <div class="table-wrap">
+          <table>
+            <thead>
+              <tr><th>Modo</th><th>Transporte</th><th>Query</th><th>Conteúdo</th></tr>
+            </thead>
+            <tbody>
+              <tr><td><code>post</code></td><td>HTTP</td><td>livre</td><td>texto ou <code>{ text, image }</code></td></tr>
+              <tr><td><code>profile</code></td><td>HTTP</td><td>livre</td><td><code>{ name, bio, image? }</code></td></tr>
+              <tr><td><code>follow</code></td><td>HTTP</td><td><code>follower</code>, <code>following</code></td><td>opcional</td></tr>
+              <tr><td><code>block</code></td><td>HTTP</td><td><code>blocker</code>, <code>blocked</code></td><td>opcional</td></tr>
+              <tr><td><code>like</code></td><td>HTTP</td><td><code>block</code></td><td>opcional</td></tr>
+              <tr><td><code>reaction</code></td><td>HTTP</td><td><code>block</code>, <code>reaction</code></td><td>opcional</td></tr>
+              <tr><td><code>comment</code></td><td>HTTP</td><td><code>block</code> + <code>parent</code> opcional</td><td>obrigatório</td></tr>
+              <tr><td><code>repost</code></td><td>HTTP</td><td><code>block</code></td><td>opcional</td></tr>
+              <tr><td><code>notification</code></td><td>HTTP</td><td><code>to</code>, <code>block</code>, <code>interaction</code>, <code>kind</code></td><td>proibido</td></tr>
+              <tr><td><code>notification_read</code></td><td>HTTP</td><td>—</td><td><code>{ read: [ids] }</code></td></tr>
+              <tr><td><code>delete</code></td><td>HTTP</td><td><code>block</code></td><td>opcional</td></tr>
+              <tr><td><code>message</code></td><td>WebSocket</td><td><code>from</code>, <code>to</code></td><td>envelope cifrado</td></tr>
+              <tr><td><code>message_read</code></td><td>HTTP</td><td>—</td><td><code>{ read: [ids] }</code></td></tr>
+            </tbody>
+          </table>
+        </div>
+        <p>
+          <code>like</code>, <code>reaction</code>, <code>repost</code>,
+          <code>follow</code>, <code>block</code> e <code>delete</code> podem
+          omitir <code>content</code>. Nos demais modos, o conteúdo é
+          obrigatório, exceto em <code>notification</code>, que não aceita
+          <code>content</code>.
+        </p>
+        <div class="callout warn">
+          <strong>Toggles.</strong> <code>like</code>, <code>reaction</code>,
+          <code>repost</code>, <code>follow</code> e <code>block</code> alternam:
+          o primeiro envio cria, um novo bloco com a mesma query remove. Cada
+          envio precisa de um novo id e de uma nova assinatura. A biblioteca
+          adiciona um <code>nonce</code> aleatório a esses blocos para que duas
+          ações no mesmo segundo não colidam.
+        </div>
+      </section>
+
+      <section class="doc-section" id="fotos">
+        <h2>Fotos em posts</h2>
+        <p>
+          A foto é opcional e vai como base64 dentro do <code>content</code>
+          assinado. O relay não confia nas dimensões declaradas: decodifica os
+          bytes, confere os magic bytes de JPEG/PNG, lê a largura e a altura reais
+          do cabeçalho e rejeita imagens acima de 500px ou do limite de bytes.
+        </p>
+        <div class="code-head"><span>content</span></div>
+        <pre><code>{
+  "text": "legenda opcional",
+  "image": {
+    "mime": "image/jpeg",
+    "data": "&lt;base64 sem prefixo data:&gt;",
+    "width": 500,
+    "height": 375
+  }
+}</code></pre>
+        <ul>
+          <li><code>mime</code>: <code>image/jpeg</code> ou <code>image/png</code>.</li>
+          <li><code>data</code>: base64 canônico, com padding, sem <code>data:</code>.</li>
+          <li><code>width</code> e <code>height</code>: inteiros positivos, iguais às dimensões reais e no máximo 500.</li>
+          <li>O JSON do conteúdo com imagem pode ter até 128 KiB; a imagem decodificada, até 72 KiB.</li>
+        </ul>
+        <p>
+          Redimensione sempre no cliente. <code>onpostt.prepareImage</code> usa
+          <code>canvas</code> e <code>FileReader</code>, mantém o maior lado em
+          500px e comprime em JPEG até o alvo:
+        </p>
+        <div class="code-head"><span>JavaScript — navegador</span></div>
+        <pre><code>const image = await onpostt.prepareImage(file, {
+  maxDimension: 500,
+  maxBytes: 64 * 1024,
+  mime: 'image/jpeg',
+});
+
+const block = await onpostt.signBlock(
+  {
+    mode: 'post',
+    query: [],
+    app: 'meu-app',
+    content: {
+      ...(caption ? { text: caption } : {}),
+      image: {
+        mime: image.mime,
+        data: image.data,
+        width: image.width,
+        height: image.height,
+      },
+    },
+  },
+  privateKey
+);
+
+if (typeof block === 'string') throw new Error(block);
+await onpostt.sendBlock(block);</code></pre>
+        <div class="callout">
+          <strong>Não basta olhar o nome do arquivo.</strong> O relay valida os
+          magic bytes e as dimensões reais. Um cliente malicioso não consegue
+          declarar 1×1 para uma imagem 4000×4000, nem enviar base64 disfarçado de
+          JPEG.
+        </div>
+        <h3>Foto no perfil</h3>
+        <p>
+          O perfil usa o mesmo helper, mas prepara a foto para até
+          <strong>150px</strong> no maior lado e mostra a prévia ao importar.
+          Quando há <code>image</code>, o relay aceita apenas <code>name</code>,
+          <code>bio</code> e <code>image</code>. Salvar sem <code>image</code>
+          remove a foto anterior. O limite de protocolo continua sendo 500px.
+        </p>
+        <div class="code-head"><span>content do perfil</span></div>
+        <pre><code>{
+  "name": "Ana",
+  "bio": "Uma frase sobre mim",
+  "image": {
+    "mime": "image/jpeg",
+    "data": "&lt;base64 sem prefixo data:&gt;",
+    "width": 150,
+    "height": 150
+  }
+}</code></pre>
+        <div class="code-head"><span>JavaScript — navegador</span></div>
+        <pre><code>const image = await onpostt.prepareImage(file, {
+  maxDimension: 150,
+  maxBytes: 64 * 1024,
+  mime: 'image/jpeg',
+});
+
+const block = await onpostt.signBlock(
+  {
+    mode: 'profile',
+    query: [],
+    app: 'meu-app',
+    content: {
+      name: 'Ana',
+      bio: 'Uma frase sobre mim',
+      image: {
+        mime: image.mime,
+        data: image.data,
+        width: image.width,
+        height: image.height,
+      },
+    },
+  },
+  privateKey
+);
+
+if (typeof block === 'string') throw new Error(block);
+await onpostt.sendBlock(block);</code></pre>
+      </section>
+
+      <section class="doc-section" id="perfil-publico">
+        <h2>Perfil público</h2>
+        <p>
+          <code>/perfil.html?pubkey=&lt;pubkey&gt;</code> abre a página pública de
+          um usuário, com foto, nome, bio, publicações e fotos, curtidas,
+          reações, comentários, seguidores e seguindo. A leitura usa blocos
+          públicos de todas as aplicações e não exige autenticação.
+        </p>
+        <div class="table-wrap">
+          <table>
+            <thead>
+              <tr><th>Rota</th><th>Função</th></tr>
+            </thead>
+            <tbody>
+              <tr><td><code>/perfil.html?pubkey=...</code></td><td>perfil público selecionado</td></tr>
+              <tr><td><code>/perfil</code>, <code>/profile</code>, <code>/profile.html</code></td><td>redirecionam para <code>/perfil.html</code> preservando a query string</td></tr>
+              <tr><td><code>/demo/?view=feed</code></td><td>demo no feed</td></tr>
+              <tr><td><code>/demo/?view=profiles</code></td><td>demo nos perfis</td></tr>
+              <tr><td><code>/demo/?view=notifications</code></td><td>demo nas notificações</td></tr>
+              <tr><td><code>/demo/?view=chat</code></td><td>demo nas conversas</td></tr>
+              <tr><td><code>/demo/?view=about</code></td><td>demo na seção sobre</td></tr>
+            </tbody>
+          </table>
+        </div>
+        <p>
+          Sem <code>pubkey</code>, a página abre o perfil da identidade local
+          quando houver uma. A demo guarda a identidade em <code>sessionStorage</code>
+          e a página de perfil também aceita <code>localStorage</code>. Os cartões
+          de perfil e a área do autor de cada publicação levam para o perfil
+          selecionado.
+        </p>
+        <div class="callout">
+          <strong>Fotos com tamanhos diferentes.</strong> A foto do perfil é
+          preparada para <strong>150px</strong>; fotos de publicações continuam
+          em <strong>500px</strong>. As duas passam pelas mesmas validações de
+          base64, magic bytes, dimensões reais e bytes no relay.
+        </div>
+      </section>
+
+      <section class="doc-section" id="social">
+        <h2>Reações e respostas</h2>
+        <h3>Curtir e reagir</h3>
+        <p>
+          A curtida é única por autor e alvo. A reação é única por autor, alvo e
+          emoji, então a mesma pessoa pode usar vários emojis no mesmo bloco.
+        </p>
+        <div class="code-head"><span>JavaScript</span></div>
+        <pre><code>const like = await onpostt.signBlock(
+  {
+    mode: 'like',
+    query: [['block', postId]],
+    app: 'meu-app',
+  },
+  privateKey
+);
+
+const reaction = await onpostt.signBlock(
+  {
+    mode: 'reaction',
+    query: [
+      ['block', postId],
+      ['reaction', '🔥'],
+    ],
+    app: 'meu-app',
+  },
+  privateKey
+);
+
+await onpostt.sendBlock(like);
+await onpostt.sendBlock(reaction);</code></pre>
+        <h3>Comentário e resposta</h3>
+        <p>
+          O alvo continua sendo o post. A resposta acrescenta
+          <code>["parent", idDoComentario]</code>. O pai precisa ser um
+          comentário existente do mesmo alvo e não pode estar excluído.
+        </p>
+        <div class="code-head"><span>JavaScript</span></div>
+        <pre><code>const comment = await onpostt.signBlock(
+  {
+    mode: 'comment',
+    query: [['block', postId]],
+    content: 'meu comentário',
+    app: 'meu-app',
+  },
+  privateKey
+);
+await onpostt.sendBlock(comment);
+
+const reply = await onpostt.signBlock(
+  {
+    mode: 'comment',
+    query: [
+      ['block', postId],
+      ['parent', comment.id],
+    ],
+    content: 'minha resposta',
+    app: 'meu-app',
+  },
+  privateKey
+);
+await onpostt.sendBlock(reply);</code></pre>
+        <h3>Excluir</h3>
+        <p>
+          Só o autor do alvo pode criar o tombstone. O bloco não é apagado
+          fisicamente; as consultas passam a ocultá-lo.
+        </p>
+        <div class="code-head"><span>JavaScript</span></div>
+        <pre><code>const tombstone = await onpostt.signBlock(
+  {
+    mode: 'delete',
+    query: [['block', postId]],
+  },
+  authorPrivateKey
+);
+await onpostt.sendBlock(tombstone);</code></pre>
+      </section>
+
+      <section class="doc-section" id="notificacoes">
+        <h2>Notificações</h2>
+        <p>
+          Uma notificação é um bloco assinado que aponta para uma interação já
+          aceita. O ator é a <code>pubkey</code> do bloco; o destinatário é
+          <code>to</code>; o alvo é <code>block</code>; a interação é
+          <code>interaction</code>; e <code>kind</code> é <code>like</code>,
+          <code>reaction</code>, <code>comment</code>, <code>repost</code> ou
+          <code>follow</code>. O bloco não tem <code>content</code>.
+        </p>
+        <div class="code-head"><span>JavaScript</span></div>
+        <pre><code>const notification = await onpostt.signBlock(
+  {
+    mode: 'notification',
+    query: [
+      ['to', ownerPubkey],
+      ['block', postId],
+      ['interaction', like.id],
+      ['kind', 'like'],
+    ],
+    app: 'meu-app',
+  },
+  actorPrivateKey
+);
+
+if (typeof notification === 'string') throw new Error(notification);
+await onpostt.sendBlock(notification);</code></pre>
+        <ul>
+          <li><code>to</code> precisa ser o dono do bloco alvo e diferente do autor.</li>
+          <li>A interação precisa existir, ter o mesmo autor e apontar para o mesmo <code>block</code>.</li>
+          <li>O modo da interação precisa ser igual a <code>kind</code>.</li>
+          <li>Alvo e interação não podem ter tombstone.</li>
+          <li>Só pode existir uma notificação por interação.</li>
+          <li>Em <code>kind: "follow"</code>, <code>block</code> e <code>interaction</code> apontam para o próprio bloco <code>follow</code>; <code>to</code> precisa ser igual a <code>following</code>.</li>
+          <li>O relay não cria a notificação automaticamente: o cliente envia depois que a curtida, reação, comentário, repost ou follow for aceito.</li>
+        </ul>
+        <p>
+          O bloco é público e imutável, mas some das consultas quando a interação
+          ou o alvo é removido. O estado de lida/limpa fica no cliente. Na demo,
+          o contador de não lidas, o texto contextual e as ações de marcar/limpar
+          são persistidos por destinatário em <code>localStorage</code>.
+        </p>
+        <div class="code-head"><span>listar notificações</span></div>
+        <pre><code>const notifications = await onpostt.list({
+  mode: 'notification',
+  app: 'meu-app',
+  query: [['to', ownerPubkey]],
+  limit: 50,
+});</code></pre>
+      </section>
+
+      <section class="doc-section" id="bloqueio">
+        <h2>Bloqueio de usuário</h2>
+        <p>
+          O bloqueio é um toggle assinado pelo bloqueador. O primeiro envio cria
+          a relação; repetir a mesma query desbloqueia. O relay recusa
+          mensagens entre as duas pubkeys, nos dois sentidos, enquanto o
+          bloqueio existir. A leitura também é filtrada no servidor: com um
+          token <code>reader</code> assinado, o relay esconde conteúdo dos
+          envolvidos nas duas direções; sem token, esconde autores que
+          participam de qualquer bloqueio ativo.
+        </p>
+        <div class="code-head"><span>JavaScript</span></div>
+        <pre><code>const block = await onpostt.signBlock(
+  {
+    mode: 'block',
+    query: [
+      ['blocker', myPubkey],
+      ['blocked', otherPubkey],
+    ],
+    app: 'meu-app',
+  },
+  myPrivateKey
+);
+
+if (typeof block === 'string') throw new Error(block);
+const [result] = await onpostt.sendBlock(block);
+// "created" bloqueia; "removed" desbloqueia
+
+// A biblioteca assina o token de leitura automaticamente.
+await onpostt.setReaderKey(myPrivateKey);</code></pre>
+        <ul>
+          <li><code>blocker</code> precisa ser a pubkey do autor; não há auto-bloqueio.</li>
+          <li>Mensagens entre o par são recusadas com <code>user_blocked</code>.</li>
+          <li>O bloqueio e o envio de mensagem usam o mesmo lock transacional do par.</li>
+          <li>O token <code>reader</code> expira em <code>READER_TOKEN_TTL_SECONDS</code> (padrão: 30 dias) e só concede leitura.</li>
+          <li>O bloco <code>block</code> continua público para a interface detectar o estado.</li>
+          <li>Uma nova chave privada é uma nova identidade; o bloqueio não impede Sybil (ver <a href="#seguranca">Segurança</a>).</li>
+        </ul>
+      </section>
+
+      <section class="doc-section" id="query">
+        <h2>Query e filtros</h2>
+        <p>
+          <code>query</code> é um array de pares. Chaves são únicas, têm 1–64
+          caracteres e valores são string, número finito ou booleano.
+        </p>
+        <div class="code-head"><span>JSON</span></div>
+        <pre><code>[
+  ["topic", "onpostt"],
+  ["lang", "pt-BR"]
+]</code></pre>
+        <p>
+          Filtros de leitura usam os mesmos pares e exigem <code>mode</code>.
+          Campos aceitos: <code>mode</code>, <code>pubkey</code>,
+          <code>query</code>, <code>since</code>, <code>until</code>,
+          <code>app</code>, <code>id</code>, <code>limit</code> e
+          <code>offset</code>. O HTTP aceita ainda um campo irmão
+          <code>reader</code>; no WebSocket, <code>reader</code> é irmão de
+          <code>filter</code>. O token é assinado pelo cliente e usado para
+          aplicar bloqueios sem confiar em um viewer enviado sem prova.
+        </p>
+        <div class="code-head"><span>JavaScript</span></div>
+        <pre><code>const posts = await onpostt.list({
+  mode: 'post',
+  app: 'meu-app',
+  query: [['topic', 'onpostt']],
+  limit: 20,
+});
+
+const reactions = await onpostt.list({
+  mode: 'reaction',
+  query: [
+    ['block', posts[0].id],
+    ['reaction', '🔥'],
+  ],
+  limit: 100,
+});
+
+const comments = await onpostt.list({
+  mode: 'comment',
+  query: [['block', posts[0].id]],
+  limit: 100,
+});</code></pre>
+        <p>
+          Em <code>message</code>, o filtro precisa de <code>pubkey</code>, dos
+          pares <code>from</code>/<code>to</code> ou de <code>id</code>. Em
+          <code>notification</code>, o filtro precisa do par
+          <code>["to", pubkey]</code> ou de <code>id</code>; <code>to</code> não
+          diferencia maiúsculas de minúsculas e <code>pubkey</code> filtra pelo
+          ator. Em <code>block</code>, use os pares <code>blocker</code> e/ou
+          <code>blocked</code>; esse modo fica fora do filtro de visibilidade
+          para a interface detectar o estado. O relay nunca aceita
+          <code>privatekey</code> em filtros.
+        </p>
+        <p>
+          Com <code>reader</code>, o relay esconde conteúdo quando leitor e
+          autor se bloquearam em qualquer direção. Sem token, a consulta é
+          anônima e esconde autores que participam de qualquer bloqueio ativo.
+          A mensagem assinada é
+          <code>onpostt-read-v1:&lt;viewer&gt;:&lt;created_at&gt;</code>.
+        </p>
+        <div class="code-head"><span>notificações do destinatário</span></div>
+        <pre><code>const notifications = await onpostt.list({
+  mode: 'notification',
+  app: 'meu-app',
+  query: [['to', myPubkey]],
+  limit: 50,
+});</code></pre>
+      </section>
+
+      <section class="doc-section" id="http">
+        <h2>HTTP</h2>
+        <div class="table-wrap">
+          <table>
+            <thead>
+              <tr><th>Rota</th><th>Método</th><th>Função</th></tr>
+            </thead>
+            <tbody>
+              <tr><td><code>/save_block</code></td><td>POST</td><td>grava um bloco assinado</td></tr>
+              <tr><td><code>/get_blocks_list</code></td><td>POST</td><td>consulta blocos</td></tr>
+              <tr><td><code>/health</code></td><td>GET</td><td>saúde do relay e do banco</td></tr>
+              <tr><td><code>/api/status</code></td><td>GET</td><td>snapshot público</td></tr>
+              <tr><td><code>/api/modes</code></td><td>GET</td><td>regras dos modos</td></tr>
+              <tr><td><code>/perfil.html</code></td><td>GET</td><td>página pública de perfil com publicações e atividade</td></tr>
+              <tr><td><code>/perfil</code>, <code>/profile</code>, <code>/profile.html</code></td><td>GET</td><td>redirecionam para o perfil preservando a query string</td></tr>
+            </tbody>
+          </table>
+        </div>
+        <div class="code-head"><span>curl</span></div>
+        <pre><code>curl -s http://localhost:3000/get_blocks_list \
+  -H 'Content-Type: application/json' \
+  -d '{"mode":"post","app":"meu-app","limit":20}'</code></pre>
+        <div class="code-head"><span>resposta</span></div>
+        <pre><code>{
+  "response": "blocks",
+  "blocks": [
+    {
+      "id": "9f2c...",
+      "pubkey": "03a1...",
+      "created_at": 1760000000,
+      "mode": "post",
+      "query": [["topic", "onpostt"]],
+      "content": "olá",
+      "app": "meu-app",
+      "sig": "3045..."
+    }
+  ],
+  "requestId": "8f4c..."
+}</code></pre>
+        <p>
+          <code>/save_block</code> devolve <code>action: "created"</code>,
+          <code>"removed"</code> (toggle) ou <code>"duplicate"</code> (id já
+          processado). Apenas ações efetivas são transmitidas pelo WebSocket.
+        </p>
+      </section>
+
+      <section class="doc-section" id="websocket">
+        <h2>WebSocket</h2>
+        <p>
+          Use o mesmo host e porta. O <code>Origin</code> é validado no upgrade.
+          Apenas <code>message</code> pode ser gravada pelo socket; os demais
+          modos usam HTTP.
+        </p>
+        <div class="code-head"><span>hello</span></div>
+        <pre><code>{
+  "response": "hello",
+  "name": "onpostt",
+  "relay": "onpostt relay",
+  "heartbeatIntervalMs": 30000
+}</code></pre>
+        <div class="code-head"><span>assinatura</span></div>
+        <pre><code>{
+  "request": "get_blocks_sub",
+  "subscription": "feed",
+  "filter": { "mode": "post", "app": "meu-app", "limit": 20 },
+  "reader": {
+    "viewer": "03a1...",
+    "created_at": 1760000000,
+    "sig": "3045..."
+  },
+  "requestId": "req-1"
+}</code></pre>
+        <p>
+          <code>reader</code> é opcional e usa o mesmo formato do HTTP. A página
+          inicial e cada bloco ao vivo passam pelo filtro de bloqueio antes da
+          entrega. Sem token, valem as regras anônimas; blocos <code>block</code>
+          continuam sendo entregues para a interface detectar o estado.
+        </p>
+        <div class="code-head"><span>blocos ao vivo</span></div>
+        <pre><code>{
+  "response": "blocks",
+  "subscription": "feed",
+  "blocks": [
+    {
+      "id": "9f2c...",
+      "pubkey": "03a1...",
+      "created_at": 1760000000,
+      "mode": "post",
+      "query": [],
+      "content": "olá",
+      "app": "meu-app",
+      "sig": "3045..."
+    }
+  ],
+  "live": true
+}</code></pre>
+        <div class="code-head"><span>gravar mensagem</span></div>
+        <pre><code>{
+  "request": "save_block",
+  "block": {
+    "id": "9f2c...",
+    "pubkey": "03a1...",
+    "created_at": 1760000000,
+    "mode": "message",
+    "query": [
+      ["from", "03a1..."],
+      ["to", "02b2..."]
+    ],
+    "content": "{\"forRecipient\":{...},\"forSender\":{...}}",
+    "app": "meu-app",
+    "sig": "3045..."
+  },
+  "requestId": "req-2"
+}</code></pre>
+        <p>
+          Envelopes <code>ping</code>, <code>unsubscribe</code>,
+          <code>get_status</code> e erros seguem o formato
+          <code>{ request, requestId }</code> / <code>{ response, status }</code>.
+          O limite padrão é 25 assinaturas e 5 pubkeys por conexão.
+        </p>
+      </section>
+
+      <section class="doc-section" id="mensagens">
+        <h2>Mensagens cifradas</h2>
+        <p>
+          O cliente gera uma chave secp256k1 efêmera por envio, faz ECDH com a
+          pubkey do destinatário e com a do remetente, deriva AES-256-GCM e grava
+          dois envelopes.
+        </p>
+        <div class="code-head"><span>content</span></div>
+        <pre><code>{
+  "forRecipient": {
+    "ciphertext": "hex; tag incluída",
+    "iv": "24 hex (12 bytes)",
+    "senderPubKey": "pubkey efêmera comprimida"
+  },
+  "forSender": {
+    "ciphertext": "hex; tag incluída",
+    "iv": "24 hex (12 bytes)",
+    "senderPubKey": "pubkey efêmera comprimida"
+  }
+}</code></pre>
+        <ol>
+          <li>ECDH entre a chave efêmera e a pubkey do participante.</li>
+          <li>Converter o segredo para hexadecimal e aplicar SHA-256 sobre o UTF-8.</li>
+          <li>Cifrar com AES-256-GCM e IV aleatório de 12 bytes.</li>
+          <li>Publicar <code>ciphertext</code>, <code>iv</code> e <code>senderPubKey</code>.</li>
+        </ol>
+        <p>
+          O relay não consegue ler o texto. O destinatário recebe uma cópia com
+          id <code>&lt;id&gt;_rcp</code> na caixa de entrada; o remetente lê a
+          mensagem original.
+        </p>
+      </section>
+
+      <section class="doc-section" id="biblioteca">
+        <h2>Biblioteca</h2>
+        <p>
+          Carregue <code>/onpostt.min.js</code> no navegador ou
+          <code>public/onpostt.js</code> no Node.js. No Node, defina
+          <code>globalThis.elliptic</code> antes de importar.
+        </p>
+        <h3>Funções principais</h3>
+        <ul>
+          <li><code>generateKeys()</code>, <code>sha256()</code> e <code>prepareImage()</code>.</li>
+          <li><code>signBlock(block, privateKey)</code> assina e devolve o bloco, ou uma string de erro.</li>
+          <li><code>sendBlock()</code>, <code>connect()</code> e <code>sub()</code>.</li>
+          <li><code>setReaderKey(privateKey)</code> assina o token de leitura; <code>createReaderToken()</code> devolve o token bruto.</li>
+          <li><code>list()</code> devolve o array e expõe <code>array.truncated</code>; assinaturas recebem <code>event.truncated</code>.</li>
+          <li><code>encryptMessage()</code> e <code>decryptMessages()</code> para mensagens diretas.</li>
+          <li><code>sanitizeFilter()</code> remove/recusa campos reservados antes de enviar.</li>
+        </ul>
+        <p>
+          <code>prepareImage</code> é exclusivo de navegador: usa
+          <code>canvas</code>, <code>FileReader</code> e
+          <code>createImageBitmap</code> para devolver
+          <code>{ mime, data, width, height, bytes }</code>.
+        </p>
+        <div class="code-head"><span>Node.js — completo</span></div>
+        <pre><code>'use strict';
+
+globalThis.elliptic = require('elliptic');
+const onpostt = require('./public/onpostt.js');
+
+const host = 'http://localhost:3000';
+const app = 'meu-app';
+
+async function main() {
+  const alice = onpostt.generateKeys();
+  const bob = onpostt.generateKeys();
+
+  onpostt.connect({ host: [host] });
+  await onpostt.setReaderKey(alice.privateKey);
+
+  const post = await onpostt.signBlock(
+    {
+      mode: 'post',
+      query: [['topic', 'onpostt']],
+      content: 'olá',
+      app,
+    },
+    alice.privateKey
+  );
+
+  if (typeof post === 'string') throw new Error(post);
+  await onpostt.sendBlock(post);
+
+  await onpostt.sendBlock(
+    await onpostt.signBlock(
+      {
+        mode: 'reaction',
+        query: [
+          ['block', post.id],
+          ['reaction', '🔥'],
+        ],
+        app,
+      },
+      bob.privateKey
+    )
+  );
+
+  const comment = await onpostt.signBlock(
+    {
+      mode: 'comment',
+      query: [['block', post.id]],
+      content: 'primeiro comentário',
+      app,
+    },
+    bob.privateKey
+  );
+  await onpostt.sendBlock(comment);
+
+  await onpostt.sendBlock(
+    await onpostt.signBlock(
+      {
+        mode: 'comment',
+        query: [
+          ['block', post.id],
+          ['parent', comment.id],
+        ],
+        content: 'resposta',
+        app,
+      },
+      bob.privateKey
+    )
+  );
+
+  console.log(await onpostt.list({ mode: 'post', app, limit: 10 }));
+}
+
+main().catch((error) => {
+  console.error(error);
+  process.exitCode = 1;
+});</code></pre>
+        <div class="code-head"><span>Navegador — feed ao vivo</span></div>
+        <pre><code>&lt;script src="/onpostt.min.js"&gt;&lt;/script&gt;
+&lt;script&gt;
+  onpostt.connect({ socket: [location.origin] });
+
+  const stop = onpostt.sub(
+    { mode: 'post', app: 'meu-app', limit: 20 },
+    function (event) {
+      event.blocks.forEach(function (block) {
+        const article = document.createElement('article');
+        article.textContent = block.content;
+        document.querySelector('#feed').appendChild(article);
+      });
+    }
+  );
+
+  // stop();
+&lt;/script&gt;</code></pre>
+        <div class="callout danger">
+          <strong>Nunca use HTML de terceiros.</strong> Trate
+          <code>content</code> como texto e renderize com
+          <code>textContent</code>. A CSP do relay também bloqueia scripts
+          inline; o exemplo acima serve para uma página sua.
+        </div>
+      </section>
+
+      <section class="doc-section" id="seguranca">
+        <h2>Segurança</h2>
+        <ul>
+          <li>A chave privada fica no cliente. Filtros com <code>privatekey</code> são rejeitados.</li>
+          <li>Todo bloco é validado por assinatura, id, tamanho, query e regras do modo.</li>
+          <li><code>processed_blocks</code> impede replay de toggles.</li>
+          <li><code>delete</code> só é aceito para o autor do alvo.</li>
+          <li>Notificações exigem interação real do mesmo autor e alvo; só existe uma por interação; follow notifications validam o próprio follow.</li>
+          <li>Mensagens entre usuários com bloqueio ativo, em qualquer sentido, são recusadas no servidor.</li>
+          <li>Leituras com <code>reader</code> verificam assinatura, timestamp e TTL; bloqueios filtram HTTP e WebSocket ao vivo nas duas direções.</li>
+          <li>Sem token, autores que participam de bloqueio ativo ficam ocultos; o bloco <code>block</code> continua público para a interface detectar o estado.</li>
+          <li>Uma nova chave privada é uma nova identidade: o protocolo não elimina Sybil sem um provedor externo de unicidade.</li>
+          <li>Respostas exigem pai do mesmo alvo e não excluído.</li>
+          <li>CORS e WebSocket restringem <code>Origin</code>.</li>
+          <li>Rate limit por IP e por conexão, além de limites de payload.</li>
+          <li>Imagens têm magic bytes, dimensões reais e tamanho verificados no relay.</li>
+          <li>Logs não registram chaves, senhas, corpos ou URL do banco.</li>
+        </ul>
+        <div class="callout">
+          <strong>HTTPS/WSS em produção.</strong> A assinatura protege a
+          integridade dos blocos, mas não esconde metadados. Configure
+          <code>HOST_ALLOWED</code> com as origens reais e mantenha
+          <code>ALLOW_NO_ORIGIN=false</code>.
+        </div>
+      </section>
+
+      <section class="doc-section" id="limites">
+        <h2>Limites</h2>
+        <div class="table-wrap">
+          <table>
+            <thead>
+              <tr><th>Item</th><th>Padrão</th></tr>
+            </thead>
+            <tbody>
+              <tr><td>Bloco</td><td>256 KiB</td></tr>
+              <tr><td>Resposta de listagem/assinatura</td><td>8 MiB; acima disso, <code>truncated: true</code></td></tr>
+              <tr><td>Conteúdo comum</td><td>64 KiB</td></tr>
+              <tr><td>JSON de conteúdo com imagem</td><td>128 KiB</td></tr>
+              <tr><td>Imagem decodificada</td><td>72 KiB</td></tr>
+              <tr><td>Maior lado da imagem (protocolo)</td><td>500px</td></tr>
+              <tr><td>Foto de perfil (cliente)</td><td>150px</td></tr>
+              <tr><td>Campos no bloco</td><td>32</td></tr>
+              <tr><td>Pares de query</td><td>32</td></tr>
+              <tr><td>Emoji de reação</td><td>32 code points</td></tr>
+              <tr><td>Blocos por consulta</td><td>1000</td></tr>
+              <tr><td>Payload WebSocket</td><td>1 MiB</td></tr>
+              <tr><td>Assinaturas por conexão</td><td>25</td></tr>
+              <tr><td>Pubkeys por conexão</td><td>5</td></tr>
+              <tr><td>Validade do token de leitura</td><td>30 dias</td></tr>
+              <tr><td>Rate limit HTTP</td><td>120 leitura / 60 escrita por minuto</td></tr>
+            </tbody>
+          </table>
+        </div>
+        <p>
+          Todos os valores são configuráveis por ambiente. Veja
+          <code>env.example</code>. O relay aceita imagens até 500px; a demo
+          prepara fotos de publicação em 500px e fotos de perfil em 150px.
+        </p>
+      </section>
+
+      <section class="doc-section" id="erros">
+        <h2>Erros</h2>
+        <p>
+          Respostas de erro têm <code>status: "erro"</code>, um
+          <code>code</code> estável e <code>requestId</code>. Os códigos mais
+          comuns:
+        </p>
+        <div class="table-wrap">
+          <table>
+            <thead>
+              <tr><th>Código</th><th>Causa</th></tr>
+            </thead>
+            <tbody>
+              <tr><td><code>invalid_block</code></td><td>formato ou regra do modo</td></tr>
+              <tr><td><code>invalid_id</code></td><td>id não confere com o hash</td></tr>
+              <tr><td><code>invalid_signature</code></td><td>assinatura inválida</td></tr>
+              <tr><td><code>invalid_image</code></td><td>base64, mime ou magic bytes inválidos</td></tr>
+              <tr><td><code>invalid_image_dimensions</code></td><td>dimensões divergentes ou acima de 500px</td></tr>
+              <tr><td><code>image_too_large</code></td><td>imagem decodificada acima de 72 KiB</td></tr>
+              <tr><td><code>invalid_filter</code></td><td>filtro inválido</td></tr>
+              <tr><td><code>invalid_reader</code></td><td>token <code>reader</code> malformado</td></tr>
+              <tr><td><code>invalid_reader_signature</code></td><td>assinatura do token <code>reader</code> inválida</td></tr>
+              <tr><td><code>reader_expired</code></td><td>token <code>reader</code> expirou</td></tr>
+              <tr><td><code>reader_not_yet_valid</code></td><td><code>reader.created_at</code> muito no futuro</td></tr>
+              <tr><td><code>target_not_found</code></td><td>alvo inexistente</td></tr>
+              <tr><td><code>target_deleted</code></td><td>alvo com tombstone</td></tr>
+              <tr><td><code>target_not_owned</code></td><td>delete por quem não é autor</td></tr>
+              <tr><td><code>parent_not_found</code></td><td>comentário pai inexistente</td></tr>
+              <tr><td><code>parent_mismatch</code></td><td>pai de outro alvo</td></tr>
+              <tr><td><code>interaction_not_found</code></td><td>notificação aponta para interação inexistente</td></tr>
+              <tr><td><code>interaction_author_mismatch</code></td><td>interação de outro autor</td></tr>
+              <tr><td><code>interaction_target_mismatch</code></td><td>interação de outro bloco</td></tr>
+              <tr><td><code>notification_recipient_mismatch</code></td><td>destinatário não é dono do alvo ou não é o <code>following</code></td></tr>
+              <tr><td><code>notification_kind_mismatch</code></td><td><code>kind</code> não corresponde à interação</td></tr>
+              <tr><td><code>notification_target_mismatch</code></td><td>follow notification não aponta para o próprio follow</td></tr>
+              <tr><td><code>notification_follow_mismatch</code></td><td>autor do follow não é o seguidor</td></tr>
+              <tr><td><code>notification_duplicate</code></td><td>já existe notificação para a interação</td></tr>
+              <tr><td><code>self_notification</code></td><td>notificação para a própria pubkey</td></tr>
+              <tr><td><code>user_blocked</code></td><td>mensagem entre usuários com bloqueio ativo</td></tr>
+              <tr><td><code>private_key_forbidden</code></td><td>filtro com <code>privatekey</code></td></tr>
+              <tr><td><code>rate_limited</code></td><td>limite de taxa</td></tr>
+              <tr><td><code>use_http</code></td><td>modo não-message no WebSocket</td></tr>
+              <tr><td><code>internal_error</code></td><td>falha interna</td></tr>
+            </tbody>
+          </table>
+        </div>
+        <div class="code-head"><span>exemplo</span></div>
+        <pre><code>{
+  "status": "erro",
+  "code": "invalid_signature",
+  "message": "Assinatura inválida. Bloco rejeitado.",
+  "requestId": "8f4c..."
+}</code></pre>
+      </section>
+
+      <section class="doc-section">
+        <h2>Próximos passos</h2>
+        <div class="grid grid-2">
+          <div class="card">
+            <h3>Executar</h3>
+            <p class="muted small">
+              Suba o relay, abra a demo, publique um post e veja o perfil público,
+              as notificações de interação e o bloqueio de usuário.
+            </p>
+            <a class="btn btn-small" href="/demo/">Abrir demo</a>
+          </div>
+          <div class="card">
+            <h3>Exemplos</h3>
+            <p class="muted small">
+              Scripts prontos para publicar, reagir, comentar, responder e enviar
+              mensagens.
+            </p>
+            <a class="btn btn-small" href="/demo/">Ver na prática</a>
+          </div>
+        </div>
+        <p class="muted small mb-0">
+          Referência completa em <code>docs/PROTOCOL.md</code>,
+          <code>docs/API.md</code> e <code>docs/SECURITY.md</code>.
+        </p>
+      </section>
+    </main>
+  </div>
+
+  <footer class="site-footer">
+    <div class="container">
+      <p class="mb-0">onpostt · protocolo de blocos assinados</p>
+    </div>
+  </footer>
+
+  <script src="/assets/doc.js"></script>
+</body>
+</html>

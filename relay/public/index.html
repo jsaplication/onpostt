@@ -1,0 +1,258 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="description" content="onpostt — relay HTTP/WebSocket para blocos assinados e mensagens cifradas de ponta a ponta.">
+  <meta name="color-scheme" content="dark">
+  <title>onpostt · relay</title>
+  <link rel="stylesheet" href="/assets/site.css">
+</head>
+<body>
+  <header class="site-header">
+    <div class="container">
+      <a class="brand" href="/">
+        <span class="brand-mark" aria-hidden="true">o/</span>
+        <span>onpostt</span>
+        <small>relay</small>
+      </a>
+      <nav class="site-nav" aria-label="Navegação principal">
+        <a href="/doc.html">Documentação</a>
+        <a href="https://onpostt.com">Publicar</a>
+        <a href="/api/status">API status</a>
+      </nav>
+    </div>
+  </header>
+
+  <main>
+    <section class="hero">
+      <div class="container hero-grid">
+        <div>
+          <div class="row mb-2">
+            <span class="pill pill-accent">
+              <span class="status-dot ok" aria-hidden="true"></span>
+              protocolo <strong>onpostt</strong>
+            </span>
+            <span class="pill">reações e respostas</span>
+          </div>
+          <h1>on<span>postt</span></h1>
+          <p class="hero-lead">
+            Relay HTTP e WebSocket para blocos assinados. Publicações, perfis,
+            curtidas, reações e comentários são públicos e verificáveis;
+            mensagens diretas são cifradas de ponta a ponta e o relay nunca vê
+            a chave privada.
+          </p>
+          <div class="hero-meta">
+            <a class="btn btn-primary" href="/login.html">Entrar</a>
+            <a class="btn" href="/cadastro.html">Criar conta</a>
+            <a class="btn btn-ghost" href="/demo/">Abrir demo</a>
+            <a class="btn btn-ghost" href="/doc.html#protocolo">Ler o protocolo</a>
+          </div>
+        </div>
+
+        <aside class="hero-side" aria-label="Estado do relay">
+          <div class="glass card">
+            <div class="row">
+              <span class="status-dot" id="health-dot" aria-hidden="true"></span>
+              <strong id="health-label">Verificando…</strong>
+              <span class="spacer"></span>
+              <span class="faint small" id="updated-at">—</span>
+            </div>
+            <div class="divider"></div>
+            <dl class="stack small">
+              <div class="row"><dt class="muted">Banco</dt><dd class="spacer"></dd><dd id="db-status" class="mono">—</dd></div>
+              <div class="row"><dt class="muted">Usuários conectados</dt><dd class="spacer"></dd><dd id="users-count" class="mono">—</dd></div>
+              <div class="row"><dt class="muted">Uptime</dt><dd class="spacer"></dd><dd id="uptime" class="mono">—</dd></div>
+              <div class="row"><dt class="muted">Blocos salvos</dt><dd class="spacer"></dd><dd id="blocks-saved" class="mono">—</dd></div>
+            </dl>
+          </div>
+          <div class="glass card">
+            <div class="metric-label">Porta</div>
+            <div class="metric-value" id="port">—</div>
+            <p class="metric-hint">HTTP e WebSocket no mesmo host.</p>
+          </div>
+        </aside>
+      </div>
+    </section>
+
+    <section class="section" aria-labelledby="metrics-title">
+      <div class="container">
+        <div class="section-head">
+          <div>
+            <h2 id="metrics-title">Relay ao vivo</h2>
+            <p>Atualizado a cada 5 segundos. Nada de chave privada ou senha é exposto.</p>
+          </div>
+          <span class="pill" id="refresh-state">auto</span>
+        </div>
+
+        <div class="grid grid-4" id="metrics">
+          <div class="metric">
+            <div class="metric-label">Protocolo</div>
+            <div class="metric-value" id="metric-protocol-name">onpostt</div>
+            <div class="metric-hint">blocos assinados</div>
+          </div>
+          <div class="metric">
+            <div class="metric-label">Modos</div>
+            <div class="metric-value" id="metric-modes">—</div>
+            <div class="metric-hint">post, like, reaction, comment…</div>
+          </div>
+          <div class="metric">
+            <div class="metric-label">Conexões WS</div>
+            <div class="metric-value" id="metric-connections">—</div>
+            <div class="metric-hint">sockets abertos</div>
+          </div>
+          <div class="metric">
+            <div class="metric-label">Assinaturas</div>
+            <div class="metric-value" id="metric-subscriptions">—</div>
+            <div class="metric-hint">filtros ativos</div>
+          </div>
+          <div class="metric">
+            <div class="metric-label">Requisições HTTP</div>
+            <div class="metric-value" id="metric-http-total">—</div>
+            <div class="metric-hint" id="metric-http-active">— ativas</div>
+          </div>
+          <div class="metric">
+            <div class="metric-label">Rejeitados</div>
+            <div class="metric-value" id="metric-rejected">—</div>
+            <div class="metric-hint" id="metric-duplicates">— duplicados</div>
+          </div>
+          <div class="metric">
+            <div class="metric-label">Último bloco</div>
+            <div class="metric-value small-value" id="metric-last-block">—</div>
+            <div class="metric-hint">recebido pelo relay</div>
+          </div>
+          <div class="metric">
+            <div class="metric-label">Memória</div>
+            <div class="metric-value" id="metric-memory">—</div>
+            <div class="metric-hint">RSS do processo</div>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <section class="section" aria-labelledby="modes-title">
+      <div class="container">
+        <div class="section-head">
+          <div>
+            <h2 id="modes-title">Modos suportados</h2>
+            <p>Cada modo tem regras próprias de <code>query</code>, validação e transporte.</p>
+          </div>
+        </div>
+        <div class="table-wrap">
+          <table>
+            <thead>
+              <tr>
+                <th scope="col">Modo</th>
+                <th scope="col">Descrição</th>
+                <th scope="col">Transporte</th>
+                <th scope="col">Query</th>
+                <th scope="col">Leitura</th>
+              </tr>
+            </thead>
+            <tbody id="modes-body">
+              <tr><td colspan="5" class="muted">Carregando modos…</td></tr>
+            </tbody>
+          </table>
+        </div>
+      </div>
+    </section>
+
+    <section class="section" aria-labelledby="api-title">
+      <div class="container grid grid-2">
+        <div>
+          <div class="section-head">
+            <div>
+              <h2 id="api-title">Superfície HTTP</h2>
+              <p>JSON estrito, limites de corpo e CORS restrito.</p>
+            </div>
+          </div>
+          <div class="table-wrap">
+            <div class="endpoint">
+              <span class="method">GET</span>
+              <div class="endpoint-body">
+                <strong>/api/status</strong>
+                <p>Modos, métricas, saúde do banco e conexões.</p>
+              </div>
+            </div>
+            <div class="endpoint">
+              <span class="method">POST</span>
+              <div class="endpoint-body">
+                <strong>/get_blocks_list</strong>
+                <p>Lista blocos por modo, pubkey, app, período, id ou pares de query.</p>
+              </div>
+            </div>
+            <div class="endpoint">
+              <span class="method">POST</span>
+              <div class="endpoint-body">
+                <strong>/save_block</strong>
+                <p>Valida id, assinatura, limites e regras do modo antes de gravar.</p>
+              </div>
+            </div>
+            <div class="endpoint">
+              <span class="method">GET</span>
+              <div class="endpoint-body">
+                <strong>/health</strong>
+                <p>Prontidão para load balancer; retorna 503 se o banco falhar.</p>
+              </div>
+            </div>
+            <div class="endpoint">
+              <span class="method ws">WS</span>
+              <div class="endpoint-body">
+                <strong>/</strong>
+                <p>Assinaturas em tempo real, heartbeat e envio de mensagens cifradas.</p>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <div>
+          <div class="section-head">
+            <div>
+              <h2>Como um bloco nasce</h2>
+              <p>O relay só aceita o que a chave pública do autor prova.</p>
+            </div>
+          </div>
+          <div class="diagram" aria-label="Fluxo de um bloco">
+            <div class="diagram-row">
+              <div class="diagram-node"><strong>Cliente</strong><small>cria o bloco</small></div>
+              <div class="diagram-arrow">→</div>
+              <div class="diagram-node accent"><strong>Assina</strong><small>secp256k1</small></div>
+              <div class="diagram-arrow">→</div>
+              <div class="diagram-node"><strong>Relay</strong><small>valida e grava</small></div>
+            </div>
+            <div class="diagram-arrow">↓</div>
+            <div class="diagram-row">
+              <div class="diagram-node"><strong>PostgreSQL</strong><small>blocos + idempotência</small></div>
+              <div class="diagram-arrow">→</div>
+              <div class="diagram-node accent"><strong>WebSocket</strong><small>fan-out por filtro</small></div>
+              <div class="diagram-arrow">→</div>
+              <div class="diagram-node"><strong>Apps</strong><small>feed, perfis, chat</small></div>
+            </div>
+          </div>
+          <div class="callout">
+            <strong>Mensagens:</strong> o remetente cifra com uma chave efêmera
+            (ECDH + AES-256-GCM). O relay guarda apenas o envelope; nem ele nem
+            outro usuário conseguem ler o conteúdo sem a chave privada do
+            destinatário.
+          </div>
+        </div>
+      </div>
+    </section>
+  </main>
+
+  <footer class="site-footer">
+    <div class="container">
+      <span>onpostt · protocolo aberto para redes sociais e mensagens</span>
+      <span>
+        <a href="/doc.html">Documentação</a> ·
+        <a href="/demo/">Demo</a> ·
+        <a href="/login.html">Entrar</a> ·
+        <a href="/health">Health</a>
+      </span>
+    </div>
+  </footer>
+
+  <div class="toast-stack" id="toast-stack" aria-live="polite" aria-atomic="false"></div>
+  <script src="/assets/dashboard.js" defer></script>
+</body>
+</html>

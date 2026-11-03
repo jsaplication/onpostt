@@ -1,0 +1,30 @@
+{
+  "name": "onpostt",
+  "version": "0.0.0",
+  "description": "onpostt — relay HTTP/WebSocket para blocos assinados e mensagens cifradas",
+  "main": "src/main.js",
+  "private": true,
+  "license": "MIT",
+  "engines": {
+    "node": ">=20.0.0"
+  },
+  "scripts": {
+    "start": "node src/main.js",
+    "dev": "node --watch src/main.js",
+    "test": "node --test",
+    "check": "node scripts/check.js",
+    "db:init": "node scripts/init-db.js",
+    "build:lib": "node scripts/build-lib.js"
+  },
+  "dependencies": {
+    "dotenv": "^16.5.0",
+    "elliptic": "^6.6.1",
+    "express": "^4.21.2",
+    "pg": "^8.16.0",
+    "winston": "^3.17.0",
+    "ws": "^8.18.2"
+  },
+  "devDependencies": {
+    "esbuild": "^0.28.2"
+  }
+}
