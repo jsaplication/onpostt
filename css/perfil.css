@@ -25,6 +25,9 @@
   gap: 1.1rem;
   align-items: start;
   margin-bottom: 1rem;
+  background:
+    radial-gradient(120% 150% at 0% 0%, rgba(181, 140, 255, 0.14), transparent 58%),
+    var(--panel);
 }
 
 .profile-avatar {
@@ -34,8 +37,9 @@
   height: 112px;
   overflow: hidden;
   border: 1px solid var(--border);
-  border-radius: 24px;
+  border-radius: 50%;
   background: var(--panel-2);
+  box-shadow: 0 0 0 4px var(--panel), 0 12px 30px rgba(0, 0, 0, 0.28);
   color: var(--accent);
   font-size: 2rem;
   font-weight: 750;
@@ -138,58 +142,26 @@
 
 .profile-post {
   margin: 0;
+  transition: border-color 0.15s ease, background 0.15s ease;
+}
+
+.profile-post:hover {
+  border-color: rgba(181, 140, 255, 0.32);
+  background: color-mix(in srgb, var(--panel) 88%, var(--accent) 12%);
 }
 
 .profile-post.profile-repost {
-  border-color: rgba(61, 220, 151, 0.28);
+  border-color: rgba(181, 140, 255, 0.28);
 }
 
-.profile-repost-origin {
-  display: flex;
-  align-items: center;
-  gap: 0.45rem;
-  min-width: 0;
-  margin: 0 0 0.55rem;
-  color: var(--muted);
-  font-size: 0.8rem;
+.profile-post[data-block] {
+  cursor: pointer;
 }
 
-.profile-repost-origin .avatar {
-  width: 28px;
-  height: 28px;
-  border-radius: 8px;
-  font-size: 0.65rem;
-}
-
-.profile-repost-origin-text {
-  min-width: 0;
-  overflow-wrap: anywhere;
-}
-
-.profile-repost-author {
-  color: var(--accent);
-  font-weight: 700;
-  text-decoration: none;
-}
-
-.profile-repost-author:hover {
-  text-decoration: underline;
-}
-
-.profile-post-head {
-  display: flex;
-  align-items: center;
-  gap: 0.55rem;
-  margin-bottom: 0.55rem;
-}
-
-.profile-post-date {
-  color: var(--muted);
-  font-size: 0.78rem;
-}
-
-.profile-post-head .block-id {
-  margin-left: auto;
+.profile-post[data-block] .post-actions,
+.profile-post[data-block] .profile-post-topics,
+.profile-post[data-block] .comment-box {
+  cursor: default;
 }
 
 .block-id {
@@ -242,9 +214,9 @@
   display: inline-flex;
   align-items: center;
   max-width: 100%;
-  border: 1px solid rgba(52, 224, 161, 0.34);
+  border: 1px solid rgba(181, 140, 255, 0.34);
   border-radius: 999px;
-  background: rgba(52, 224, 161, 0.09);
+  background: rgba(181, 140, 255, 0.09);
   color: var(--accent);
   font-size: 0.74rem;
   font-weight: 700;
@@ -257,7 +229,7 @@
 .profile-topic-chip:hover,
 .profile-topic-chip:focus-visible {
   border-color: var(--accent);
-  background: rgba(52, 224, 161, 0.16);
+  background: rgba(181, 140, 255, 0.16);
   color: var(--text);
 }
 
@@ -301,54 +273,19 @@
 
 .action-button.liked {
   color: #ffd2d2;
-  background: rgba(255, 107, 107, 0.1);
-  border-color: rgba(255, 107, 107, 0.3);
+  background: rgba(255, 123, 143, 0.1);
+  border-color: rgba(255, 123, 143, 0.3);
 }
 
 .action-button.reposted {
   color: var(--accent);
-  background: rgba(61, 220, 151, 0.08);
-  border-color: rgba(61, 220, 151, 0.35);
+  background: rgba(181, 140, 255, 0.08);
+  border-color: rgba(181, 140, 255, 0.35);
 }
 
 .action-button[disabled] {
   opacity: 0.5;
   cursor: not-allowed;
-}
-
-.reaction-bar {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 0.35rem;
-  margin: 0 0 0.65rem;
-}
-
-.reaction-button {
-  border: 1px solid var(--border);
-  background: var(--panel-2);
-  color: var(--muted);
-  font: inherit;
-  font-size: 0.82rem;
-  line-height: 1.3;
-  padding: 0.24rem 0.52rem;
-  border-radius: 999px;
-  cursor: pointer;
-}
-
-.reaction-button:hover {
-  color: var(--text);
-  border-color: var(--accent);
-}
-
-.reaction-button.active {
-  color: var(--text);
-  border-color: var(--accent);
-  background: rgba(61, 220, 151, 0.14);
-}
-
-.reaction-button[disabled] {
-  opacity: 0.55;
-  cursor: wait;
 }
 
 .comment-box {
@@ -469,13 +406,13 @@
 .comment-reaction.active {
   color: var(--text);
   border-color: var(--accent);
-  background: rgba(61, 220, 151, 0.14);
+  background: rgba(181, 140, 255, 0.14);
 }
 
 .comment-reaction.dislike.active {
   color: #ffd2d2;
-  border-color: rgba(255, 107, 107, 0.3);
-  background: rgba(255, 107, 107, 0.1);
+  border-color: rgba(255, 123, 143, 0.3);
+  background: rgba(255, 123, 143, 0.1);
 }
 
 .comment-reaction[disabled] {
@@ -634,7 +571,7 @@
   .profile-avatar {
     width: 88px;
     height: 88px;
-    border-radius: 20px;
+    border-radius: 50%;
     font-size: 1.55rem;
   }
 

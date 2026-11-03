@@ -1,23 +1,23 @@
 /* onpostt — estilos compartilhados (dashboard, documentação e demo) */
 
 :root {
-  --bg: #070b0f;
-  --bg-soft: #0b1219;
-  --panel: #0f1720;
-  --panel-2: #121d28;
-  --border: #1f3140;
-  --border-soft: #162531;
-  --text: #e6f1f7;
-  --muted: #8ba3b5;
-  --faint: #5d7284;
-  --accent: #34e0a1;
-  --accent-2: #4cc9f0;
-  --danger: #ff6b6b;
-  --warn: #ffc857;
-  --ok: #34e0a1;
+  --bg: #1e1928;
+  --bg-soft: #262031;
+  --panel: #2b253a;
+  --panel-2: #342d45;
+  --border: #4d4265;
+  --border-soft: #3e3551;
+  --text: #f7f2ff;
+  --muted: #c9bde0;
+  --faint: #a093bb;
+  --accent: #b58cff;
+  --accent-2: #ff8fae;
+  --danger: #ff7b8f;
+  --warn: #ffc978;
+  --ok: #7dd3fc;
   --radius: 14px;
   --radius-sm: 9px;
-  --shadow: 0 18px 50px rgba(0, 0, 0, 0.35);
+  --shadow: 0 18px 50px rgba(12, 8, 22, 0.46);
   --mono: ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas, "Liberation Mono", monospace;
   --sans: "Segoe UI", system-ui, -apple-system, BlinkMacSystemFont, Roboto, Arial, sans-serif;
 }
@@ -37,8 +37,8 @@ body {
   min-height: 100vh;
   color: var(--text);
   background:
-    radial-gradient(900px 500px at 15% -10%, rgba(52, 224, 161, 0.13), transparent 60%),
-    radial-gradient(800px 480px at 95% 0%, rgba(76, 201, 240, 0.1), transparent 55%),
+    radial-gradient(900px 500px at 15% -10%, rgba(181, 140, 255, 0.13), transparent 60%),
+    radial-gradient(800px 480px at 95% 0%, rgba(255, 143, 174, 0.1), transparent 55%),
     var(--bg);
   font-family: var(--sans);
   line-height: 1.6;
@@ -86,8 +86,8 @@ pre,
 code {
   font-size: 0.9em;
   color: #a8f0d4;
-  background: rgba(52, 224, 161, 0.08);
-  border: 1px solid rgba(52, 224, 161, 0.16);
+  background: rgba(181, 140, 255, 0.08);
+  border: 1px solid rgba(181, 140, 255, 0.16);
   border-radius: 6px;
   padding: 0.08rem 0.34rem;
   overflow-wrap: anywhere;
@@ -97,7 +97,7 @@ pre {
   margin: 0 0 1rem;
   padding: 1rem 1.1rem;
   overflow: auto;
-  background: #060a0e;
+  background: #16121f;
   border: 1px solid var(--border);
   border-radius: var(--radius-sm);
   color: #cfe6f2;
@@ -132,7 +132,7 @@ pre code {
   top: 0;
   z-index: 20;
   backdrop-filter: blur(14px);
-  background: rgba(7, 11, 15, 0.82);
+  background: rgba(30, 25, 40, 0.82);
   border-bottom: 1px solid var(--border-soft);
 }
 
@@ -164,7 +164,7 @@ pre code {
   width: 34px;
   height: 34px;
   border-radius: 10px;
-  color: #04120c;
+  color: #1a1228;
   background: linear-gradient(135deg, var(--accent), var(--accent-2));
   font-family: var(--mono);
   font-weight: 800;
@@ -225,7 +225,7 @@ pre code {
 }
 
 .btn:hover {
-  border-color: #2c4a5e;
+  border-color: #4d4265;
   text-decoration: none;
   transform: translateY(-1px);
 }
@@ -245,7 +245,7 @@ pre code {
 }
 
 .btn-primary {
-  color: #04120c;
+  color: #1a1228;
   background: linear-gradient(135deg, var(--accent), #67f0be);
   border-color: transparent;
 }
@@ -287,8 +287,8 @@ pre code {
 
 .pill-accent {
   color: #b9ffe3;
-  border-color: rgba(52, 224, 161, 0.35);
-  background: rgba(52, 224, 161, 0.08);
+  border-color: rgba(181, 140, 255, 0.35);
+  background: rgba(181, 140, 255, 0.08);
 }
 
 .status-dot {
@@ -296,22 +296,22 @@ pre code {
   height: 8px;
   border-radius: 50%;
   background: var(--faint);
-  box-shadow: 0 0 0 3px rgba(93, 114, 132, 0.15);
+  box-shadow: 0 0 0 3px rgba(160, 147, 187, 0.15);
 }
 
 .status-dot.ok {
   background: var(--ok);
-  box-shadow: 0 0 0 3px rgba(52, 224, 161, 0.16);
+  box-shadow: 0 0 0 3px rgba(181, 140, 255, 0.16);
 }
 
 .status-dot.warn {
   background: var(--warn);
-  box-shadow: 0 0 0 3px rgba(255, 200, 87, 0.16);
+  box-shadow: 0 0 0 3px rgba(255, 201, 120, 0.16);
 }
 
 .status-dot.error {
   background: var(--danger);
-  box-shadow: 0 0 0 3px rgba(255, 107, 107, 0.16);
+  box-shadow: 0 0 0 3px rgba(255, 123, 143, 0.16);
 }
 
 .muted {
@@ -383,7 +383,7 @@ pre code {
 }
 
 .glass {
-  background: linear-gradient(180deg, rgba(18, 29, 40, 0.9), rgba(11, 18, 25, 0.9));
+  background: linear-gradient(180deg, rgba(43, 37, 58, 0.9), rgba(38, 32, 49, 0.9));
   border: 1px solid var(--border);
   border-radius: var(--radius);
   box-shadow: var(--shadow);
@@ -513,7 +513,7 @@ th {
   font-size: 0.72rem;
   letter-spacing: 0.1em;
   text-transform: uppercase;
-  background: rgba(11, 18, 25, 0.6);
+  background: rgba(38, 32, 49, 0.6);
   position: sticky;
   top: 0;
 }
@@ -553,14 +553,14 @@ td code {
   padding: 0.28rem 0.45rem;
   border-radius: 6px;
   color: #b9ffe3;
-  background: rgba(52, 224, 161, 0.1);
-  border: 1px solid rgba(52, 224, 161, 0.25);
+  background: rgba(181, 140, 255, 0.1);
+  border: 1px solid rgba(181, 140, 255, 0.25);
 }
 
 .method.ws {
   color: #c8ecff;
-  background: rgba(76, 201, 240, 0.1);
-  border-color: rgba(76, 201, 240, 0.28);
+  background: rgba(255, 143, 174, 0.1);
+  border-color: rgba(255, 143, 174, 0.28);
 }
 
 .endpoint-body {
@@ -587,7 +587,7 @@ td code {
 .select {
   width: 100%;
   color: var(--text);
-  background: #0a1219;
+  background: #221d2e;
   border: 1px solid var(--border);
   border-radius: 10px;
   padding: 0.68rem 0.8rem;
@@ -634,7 +634,7 @@ td code {
   border-left: 3px solid var(--accent-2);
   border-radius: var(--radius-sm);
   padding: 0.9rem 1rem;
-  background: rgba(76, 201, 240, 0.05);
+  background: rgba(255, 143, 174, 0.05);
   color: var(--muted);
   font-size: 0.9rem;
   margin: 1rem 0;
@@ -646,12 +646,12 @@ td code {
 
 .callout.warn {
   border-left-color: var(--warn);
-  background: rgba(255, 200, 87, 0.05);
+  background: rgba(255, 201, 120, 0.05);
 }
 
 .callout.danger {
   border-left-color: var(--danger);
-  background: rgba(255, 107, 107, 0.05);
+  background: rgba(255, 123, 143, 0.05);
 }
 
 /* -------------------------------------------------------------------------- */
@@ -720,7 +720,7 @@ td code {
 
 .doc-side a.active {
   color: #c9ffe8;
-  background: rgba(52, 224, 161, 0.08);
+  background: rgba(181, 140, 255, 0.08);
   border-left-color: var(--accent);
 }
 
@@ -809,7 +809,7 @@ td code {
   position: absolute;
   top: 0.45rem;
   right: 0.45rem;
-  background: rgba(18, 29, 40, 0.92);
+  background: rgba(43, 37, 58, 0.92);
   z-index: 1;
   color: var(--muted);
 }
@@ -835,7 +835,7 @@ td code {
   border: 1px solid var(--border);
   border-radius: var(--radius);
   background:
-    linear-gradient(180deg, rgba(18, 29, 40, 0.8), rgba(8, 13, 18, 0.8));
+    linear-gradient(180deg, rgba(43, 37, 58, 0.8), rgba(22, 18, 31, 0.8));
   margin: 1rem 0 1.4rem;
 }
 
@@ -867,8 +867,8 @@ td code {
 }
 
 .diagram-node.accent {
-  border-color: rgba(52, 224, 161, 0.38);
-  background: rgba(52, 224, 161, 0.07);
+  border-color: rgba(181, 140, 255, 0.38);
+  background: rgba(181, 140, 255, 0.07);
 }
 
 .diagram-arrow {

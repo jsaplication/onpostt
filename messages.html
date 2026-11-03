@@ -1,0 +1,55 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+
+  <title>Conversas | Onpostt</title>
+
+  <meta
+    name="description"
+    content="Conversas cifradas de ponta a ponta no Onpostt, com layout de mensagens diretas e relays independentes."
+  >
+  <meta name="author" content="Onpostt">
+  <meta name="robots" content="noindex, follow">
+  <meta name="referrer" content="strict-origin-when-cross-origin">
+  <meta http-equiv="content-language" content="pt-BR">
+  <meta name="color-scheme" content="dark">
+  <meta name="theme-color" content="#1e1928">
+
+  <link rel="icon" href="/favicon.ico" sizes="any">
+  <link rel="icon" type="image/png" href="/images/favicon-32x32.png" sizes="32x32">
+  <link rel="apple-touch-icon" href="/images/apple-touch-icon.png">
+
+  <link rel="stylesheet" href="/css/site.css">
+  <link rel="stylesheet" href="/css/style.css">
+  <link rel="stylesheet" href="/css/messages.css">
+</head>
+
+<body class="demo-body messages-body">
+  <div class="messages-loading" id="messages-loading" role="status" aria-live="polite">
+    <div class="messages-loading-card">
+      <div class="messages-loading-mark" aria-hidden="true">o/</div>
+      <h1>Conversas</h1>
+      <p>Carregando suas mensagens cifradas…</p>
+      <div class="messages-loading-error" id="messages-loading-error" hidden></div>
+    </div>
+  </div>
+
+  <div id="app-shell"></div>
+
+  <noscript>
+    <p class="container" style="padding: 2rem 0;">
+      Ative o JavaScript para usar as conversas do Onpostt.
+    </p>
+  </noscript>
+
+  <script src="js/relay.js" defer></script>
+  <script src="js/relays-ui.js" defer></script>
+  <script src="js/onpostt.min.js" defer></script>
+  <script src="js/auth.js" defer></script>
+  <script src="js/messages.js" defer></script>
+</body>
+
+</html>

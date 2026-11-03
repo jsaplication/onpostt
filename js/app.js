@@ -2,18 +2,59 @@
 
 (function () {
   var APP = 'onpostt-demo';
-  var ORIGIN = "https://onpostt-relay1.onrender.com"
-  var WS_URL = ORIGIN.replace(/^http/, 'ws');
-  var MAX_POSTS = 50;
+  // A página messages.html reaproveita este mesmo app.js, mas carrega somente
+  // o necessário para as conversas (sem feed, trending e notificações).
+  var MESSAGES_PAGE = document.body.classList.contains('messages-body');
+  // post.html também reaproveita o app.js, mas exibe somente uma publicação.
+  var POST_PAGE = document.body.classList.contains('post-body');
+
+  // Configuração central em js/relay.js. O fallback mantém o app funcionando
+  // mesmo se aquele arquivo não for carregado.
+  var RELAY =
+    window.onposttRelay && Array.isArray(window.onposttRelay.hosts)
+      ? window.onposttRelay
+      : (function () {
+          var fallbackHosts = ['http://localhost:3000'];
+          return {
+            hosts: fallbackHosts,
+            sockets: fallbackHosts.map(function (url) {
+              return url.replace(/^http/i, 'ws');
+            }),
+            url: function (path) {
+              return fallbackHosts[0] + path;
+            },
+          };
+        })();
+
+  var ORIGIN = RELAY.hosts;
+  var WS_URL = RELAY.sockets;
+
+  // Relays que responderam à última verificação. O relay.js remove da
+  // conexão os hosts fora do ar para não travar as listagens (a biblioteca
+  // espera todos os hosts responderem).
+  function relayConnectOptions() {
+    if (RELAY && typeof RELAY.connectOptions === 'function') return RELAY.connectOptions();
+    return { host: ORIGIN, socket: WS_URL };
+  }
+  // O feed carrega uma página pequena e cresce sob demanda com offset.
+  var FEED_PAGE_SIZE = 20;
+  var MAX_FEED_PAGE_SIZE = 200;
   var MAX_TOPIC_POSTS = 100;
   var MAX_TOPICS = 5;
+  var MAX_LINK_PREVIEWS = 3;
+  var LINK_PREVIEW_DELAY_MS = 450;
   var TRENDING_LIMIT = 10;
   var TRENDING_WINDOW_SECONDS = 7 * 24 * 60 * 60;
   var TRENDING_REFRESH_MS = 15000;
   var MAX_REPOSTS = 100;
   var MAX_REPOST_FETCHES = 30;
   var MAX_REPOST_PROFILE_LOOKUPS = 50;
-  var MAX_SOCIAL = 1000;
+  var MAX_SOCIAL = 500;
+  var MAX_COMMENT_INDEX = 200;
+  var MAX_COMMENTS_PER_POST = 200;
+  var MAX_PROFILE_SUGGESTIONS = 24;
+  var PROFILE_SEARCH_PAGE = 100;
+  var MAX_PROFILE_SEARCH = 500;
   var MAX_NOTIFICATIONS = 200;
   var MAX_INBOX = 1000;
   var MAX_MESSAGE_READS = 1000;
@@ -24,7 +65,6 @@
   var MAX_CHAT_AUDIO_BYTES = 135000;
   var CHAT_AUDIO_LIMIT_MS = 15000;
   var HIDDEN_CHATS_PREFIX = 'onpostt.demo.hidden.';
-  var REACTIONS = ['❤️', '😂', '🔥', '👏', '😮'];
   var COMMENT_LIKE = '👍';
   var COMMENT_DISLIKE = '👎';
   var COMMENT_REACTIONS = [COMMENT_LIKE, COMMENT_DISLIKE];
@@ -37,6 +77,8 @@
     likes: new Map(),
     reactions: new Map(),
     comments: new Map(),
+    commentLoading: new Set(),
+    commentLoaded: new Set(),
     reposts: new Map(),
     repostBlocks: [],
     repostPosts: new Map(),
@@ -54,6 +96,10 @@
     replyTo: new Map(),
     view: 'feed',
     feedMode: 'global',
+    feedPageCount: 1,
+    feedOffset: 0,
+    feedHasMore: false,
+    feedLoadingMore: false,
     composeTopics: [],
     topicFilter: null,
     topicPosts: [],
@@ -63,6 +109,7 @@
     trendingError: '',
     trendingFetchedAt: 0,
     peer: null,
+    chatQuery: '',
     chat: new Map(),
     chatPending: new Set(),
     chatUnsubs: [],
@@ -83,9 +130,17 @@
     profileImageBusy: false,
     profileImageRemoved: false,
     profileQuery: '',
+    suggestedPubkeys: [],
+    profileSearchResults: new Map(),
+    profileSearchTerm: '',
+    profileSearchOffset: 0,
+    profileSearchHasMore: false,
+    profileSearchLoading: false,
+    profileSearchSeq: 0,
     notifications: [],
     notificationRead: new Set(),
     showReadNotifications: false,
+    detail: null,
     ready: false,
   };
 
@@ -95,6 +150,9 @@
   var MAX_PROFILE_IMAGE_DIMENSION = 150;
 
   var refreshTimer = null;
+  var composePreviewTimer = null;
+  var profileSearchTimer = null;
+  var linkPreviewCache = new Map();
   var errorTimes = new Map();
 
   /* ---------------------------------------------------------------------- */
@@ -224,6 +282,24 @@
     return formatTime(timestamp);
   }
 
+  function formatDayLabel(timestamp) {
+    if (!timestamp) return '';
+    var date = new Date(timestamp * 1000);
+    if (!Number.isFinite(date.getTime())) return '';
+
+    var today = new Date();
+    var yesterday = new Date();
+    yesterday.setDate(today.getDate() - 1);
+
+    if (date.toDateString() === today.toDateString()) return 'Hoje';
+    if (date.toDateString() === yesterday.toDateString()) return 'Ontem';
+    return date.toLocaleDateString('pt-BR', {
+      day: '2-digit',
+      month: 'short',
+      year: 'numeric',
+    });
+  }
+
   function queryValue(block, key) {
     if (!block || !Array.isArray(block.query)) return undefined;
     for (var i = 0; i < block.query.length; i += 1) {
@@ -266,6 +342,322 @@
     return TOPIC_RE.test(topic) ? topic : '';
   }
 
+  function extractTopicsFromText(text) {
+    if (typeof text !== 'string' || !text) return [];
+    var topics = [];
+    var seen = Object.create(null);
+    var re = /(^|[\s([{>])#([^\s#<>"'`]+)/g;
+    var match;
+
+    while ((match = re.exec(text))) {
+      var raw = match[2].replace(/[.,;:!?)\]}]+$/g, '');
+      var topic = normalizeTopic(raw);
+      if (!topic || seen[topic]) continue;
+      seen[topic] = true;
+      topics.push(topic);
+    }
+
+    return topics;
+  }
+
+  function trimUrlCandidate(value) {
+    var candidate = String(value || '').replace(/[.,;:!?]+$/g, '');
+
+    while (candidate) {
+      var last = candidate.charAt(candidate.length - 1);
+      if (
+        last === ')' &&
+        (candidate.match(/\)/g) || []).length > (candidate.match(/\(/g) || []).length
+      ) {
+        candidate = candidate.slice(0, -1);
+        continue;
+      }
+      if (
+        last === ']' &&
+        (candidate.match(/\]/g) || []).length > (candidate.match(/\[/g) || []).length
+      ) {
+        candidate = candidate.slice(0, -1);
+        continue;
+      }
+      if (
+        last === '}' &&
+        (candidate.match(/\}/g) || []).length > (candidate.match(/\{/g) || []).length
+      ) {
+        candidate = candidate.slice(0, -1);
+        continue;
+      }
+      break;
+    }
+
+    return candidate;
+  }
+
+  function hrefForUrl(value) {
+    return /^www\./i.test(value) ? 'https://' + value : value;
+  }
+
+  function hostnameOf(value) {
+    try {
+      return new URL(value).hostname.replace(/^www\./i, '');
+    } catch (error) {
+      return '';
+    }
+  }
+
+  function extractUrls(text) {
+    if (typeof text !== 'string' || !text) return [];
+    var results = [];
+    var seen = Object.create(null);
+    var re = /(?:\bhttps?:\/\/|\bwww\.)[^\s<>"']+/gi;
+    var match;
+
+    while ((match = re.exec(text))) {
+      var candidate = trimUrlCandidate(match[0]);
+      if (!candidate) continue;
+      var href = hrefForUrl(candidate);
+      try {
+        var parsed = new URL(href);
+        if (parsed.protocol !== 'http:' && parsed.protocol !== 'https:') continue;
+        href = parsed.href;
+      } catch (error) {
+        continue;
+      }
+      var key = href.toLowerCase();
+      if (seen[key]) continue;
+      seen[key] = true;
+      results.push({ text: candidate, href: href });
+    }
+
+    return results;
+  }
+
+  function appendLinkifiedText(parent, text) {
+    var re = /(?:\bhttps?:\/\/|\bwww\.)[^\s<>"']+/gi;
+    var last = 0;
+    var match;
+
+    while ((match = re.exec(text))) {
+      var candidate = trimUrlCandidate(match[0]);
+      if (!candidate) continue;
+      var href = hrefForUrl(candidate);
+      try {
+        var parsed = new URL(href);
+        if (parsed.protocol !== 'http:' && parsed.protocol !== 'https:') continue;
+        href = parsed.href;
+      } catch (error) {
+        continue;
+      }
+
+      if (match.index > last) {
+        parent.appendChild(document.createTextNode(text.slice(last, match.index)));
+      }
+
+      var link = document.createElement('a');
+      link.className = 'post-link';
+      link.href = href;
+      link.textContent = candidate;
+      link.target = '_blank';
+      link.rel = 'noopener noreferrer';
+      parent.appendChild(link);
+
+      last = match.index + candidate.length;
+      re.lastIndex = last;
+    }
+
+    if (last < text.length) {
+      parent.appendChild(document.createTextNode(text.slice(last)));
+    }
+  }
+
+  function appendPostText(article, text) {
+    if (!text) return;
+
+    var paragraph = el('p', 'post-content');
+    appendLinkifiedText(paragraph, text);
+    article.appendChild(paragraph);
+
+    if (extractUrls(text).length) {
+      var previews = el('div', 'link-previews');
+      article.appendChild(previews);
+      renderLinkPreviews(previews, text);
+    }
+  }
+
+  function fetchLinkPreview(url) {
+    if (linkPreviewCache.has(url)) return linkPreviewCache.get(url);
+
+    var promise = fetch('/api/link-preview?url=' + encodeURIComponent(url), {
+      headers: { Accept: 'application/json' },
+    })
+      .then(function (response) {
+        if (!response.ok) throw new Error('Prévia indisponível.');
+        return response.json();
+      })
+      .then(function (data) {
+        if (
+          !data ||
+          (!data.title && !data.description && !data.image)
+        ) {
+          return null;
+        }
+        return data;
+      })
+      .catch(function () {
+        return null;
+      });
+
+    linkPreviewCache.set(url, promise);
+    return promise;
+  }
+
+  function createLinkPreviewCard(link) {
+    var card = document.createElement('a');
+    card.className = 'link-preview';
+    card.href = link.href;
+    card.target = '_blank';
+    card.rel = 'noopener noreferrer';
+    card.hidden = true;
+
+    var media = el('div', 'link-preview-media');
+    media.hidden = true;
+    var image = document.createElement('img');
+    image.alt = '';
+    image.loading = 'lazy';
+    image.decoding = 'async';
+    image.referrerPolicy = 'no-referrer';
+    media.appendChild(image);
+    card.appendChild(media);
+
+    var body = el('div', 'link-preview-body');
+    var site = el('span', 'link-preview-site', hostnameOf(link.href));
+    var title = el('strong', 'link-preview-title', '');
+    var description = el('span', 'link-preview-description', '');
+    description.hidden = true;
+    var urlText = el('span', 'link-preview-url', link.text);
+    body.appendChild(site);
+    body.appendChild(title);
+    body.appendChild(description);
+    body.appendChild(urlText);
+    card.appendChild(body);
+
+    return card;
+  }
+
+  function fillLinkPreview(card, data) {
+    var href = data.finalUrl || data.url || card.href;
+    try {
+      var parsed = new URL(href);
+      if (parsed.protocol === 'http:' || parsed.protocol === 'https:') {
+        href = parsed.href;
+        card.href = href;
+      }
+    } catch (error) {
+      /* mantém o endereço original */
+    }
+
+    var label = data.site || hostnameOf(href) || 'Link';
+    var site = card.querySelector('.link-preview-site');
+    var title = card.querySelector('.link-preview-title');
+    var description = card.querySelector('.link-preview-description');
+    var urlText = card.querySelector('.link-preview-url');
+    var media = card.querySelector('.link-preview-media');
+    var image = media ? media.querySelector('img') : null;
+
+    if (site) site.textContent = label;
+    if (title) title.textContent = data.title || label;
+    if (description) {
+      description.textContent = data.description || '';
+      description.hidden = !data.description;
+    }
+    if (urlText) {
+      urlText.textContent = href.replace(/^https?:\/\//i, '').replace(/\/$/, '');
+    }
+    if (media && image) {
+      if (data.image && /^https?:\/\//i.test(data.image)) {
+        image.src = data.image;
+        image.alt = data.title || label;
+        media.hidden = false;
+      } else {
+        media.hidden = true;
+      }
+    }
+
+    card.hidden = false;
+  }
+
+  function renderLinkPreviews(container, text) {
+    if (!container) return;
+
+    clear(container);
+    var links = extractUrls(text).slice(0, MAX_LINK_PREVIEWS);
+    if (!links.length) {
+      container.hidden = true;
+      return;
+    }
+
+    container.hidden = false;
+    links.forEach(function (link) {
+      var card = createLinkPreviewCard(link);
+      container.appendChild(card);
+
+      fetchLinkPreview(link.href).then(function (data) {
+        if (!card.isConnected) return;
+        if (!data) {
+          card.remove();
+          if (!container.querySelector('.link-preview')) container.hidden = true;
+          return;
+        }
+        fillLinkPreview(card, data);
+      });
+    });
+  }
+
+  function syncComposeTopics() {
+    var textarea = byId('post-content');
+    if (!textarea) return;
+
+    var detected = extractTopicsFromText(textarea.value);
+    state.composeTopics = detected.slice(0, MAX_TOPICS);
+    renderComposeTopics();
+
+    var hint = byId('compose-topic-hint');
+    if (hint) {
+      hint.textContent =
+        detected.length > MAX_TOPICS
+          ? 'Detectamos ' +
+            detected.length +
+            ' tópicos; apenas os ' +
+            MAX_TOPICS +
+            ' primeiros serão publicados.'
+          : 'Digite #tópicos no texto. Até ' +
+            MAX_TOPICS +
+            ' são publicados automaticamente.';
+    }
+  }
+
+  function scheduleComposeLinkPreviews() {
+    var container = byId('compose-link-previews');
+    if (!container) return;
+
+    if (composePreviewTimer) {
+      clearTimeout(composePreviewTimer);
+      composePreviewTimer = null;
+    }
+
+    var textarea = byId('post-content');
+    var text = textarea ? textarea.value : '';
+    if (!extractUrls(text).length) {
+      clear(container);
+      container.hidden = true;
+      return;
+    }
+
+    composePreviewTimer = setTimeout(function () {
+      composePreviewTimer = null;
+      renderLinkPreviews(container, text);
+    }, LINK_PREVIEW_DELAY_MS);
+  }
+
   function topicsOf(block) {
     if (!block || block.mode !== 'post') return [];
     var topics = [];
@@ -280,12 +672,17 @@
     }
 
     if (content && Array.isArray(content.topics)) content.topics.forEach(add);
+    if (typeof block.content === 'string') {
+      extractTopicsFromText(block.content).slice(0, MAX_TOPICS).forEach(add);
+    } else if (content && typeof content.text === 'string') {
+      extractTopicsFromText(content.text).slice(0, MAX_TOPICS).forEach(add);
+    }
     if (Array.isArray(block.query)) {
       block.query.forEach(function (pair) {
         if (Array.isArray(pair) && pair[0] === 'topic') add(pair[1]);
       });
     }
-    return topics;
+    return topics.slice(0, MAX_TOPICS);
   }
 
   function topicLabel(topic) {
@@ -344,13 +741,17 @@
   }
 
   function setNet(status, label) {
-    var dot = byId('net-status') && byId('net-status').querySelector('.status-dot');
+    var pill = byId('net-status');
+    var dot = pill && pill.querySelector('.status-dot');
     if (dot) {
       dot.classList.remove('ok', 'warn', 'error');
       if (status) dot.classList.add(status);
     }
     var text = byId('net-label');
     if (text) text.textContent = label;
+    if (pill && RELAY && Array.isArray(RELAY.hosts)) {
+      pill.title = 'Relays (clique para gerenciar): ' + RELAY.hosts.join(' · ');
+    }
   }
 
   function setBusy(button, busy) {
@@ -423,11 +824,108 @@
     return true;
   }
 
+  function profileHref(pubkey) {
+    return '/perfil.html?pubkey=' + encodeURIComponent(pubkey);
+  }
+
+  function keepProfile(profile) {
+    if (!profile || typeof profile.pubkey !== 'string') return;
+    var current = state.profiles.get(profile.pubkey);
+    if (!current || (profile.created_at || 0) >= (current.created_at || 0)) {
+      state.profiles.set(profile.pubkey, profile);
+    }
+  }
+
+  function fillAvatarBox(box, name, pubkey, image) {
+    if (!box) return;
+    clear(box);
+    var photo = normalizeImage(image);
+    box.classList.toggle('has-photo', Boolean(photo));
+    if (photo) {
+      var img = document.createElement('img');
+      img.src = 'data:' + photo.mime + ';base64,' + photo.data;
+      img.alt = '';
+      img.width = photo.width;
+      img.height = photo.height;
+      img.loading = 'lazy';
+      img.decoding = 'async';
+      img.referrerPolicy = 'no-referrer';
+      box.appendChild(img);
+    } else {
+      box.textContent = initials(name, pubkey);
+    }
+  }
+
+  function closeProfileMenu() {
+    var button = byId('identity-button');
+    var dropdown = byId('profile-dropdown');
+    if (dropdown) dropdown.hidden = true;
+    if (button) button.setAttribute('aria-expanded', 'false');
+  }
+
+  function toggleProfileMenu() {
+    var button = byId('identity-button');
+    var dropdown = byId('profile-dropdown');
+    if (!button || !dropdown) return;
+    var open = dropdown.hidden;
+    dropdown.hidden = !open;
+    button.setAttribute('aria-expanded', open ? 'true' : 'false');
+  }
+
+  function renderSettings() {
+    if (!state.identity) return;
+    var nameNode = byId('settings-name');
+    if (!nameNode) return;
+
+    var me = state.identity.publicKey;
+    var data = profileData(profileOf(me));
+    var name = data.name || state.identity.username || shortKey(me);
+
+    nameNode.textContent = name;
+    var pubkeyNode = byId('settings-pubkey');
+    if (pubkeyNode) {
+      pubkeyNode.textContent = shortKey(me);
+      pubkeyNode.title = me;
+    }
+    fillAvatarBox(byId('settings-avatar'), name, me, data.image);
+
+    var profileLink = byId('settings-profile-link');
+    if (profileLink) profileLink.href = profileHref(me);
+    var editLink = byId('settings-edit-link');
+    if (editLink) editLink.href = '/?view=profile-edit';
+  }
+
   function updateIdentityUi() {
     var button = byId('identity-button');
     if (!button || !state.identity) return;
-    button.textContent = state.identity.username || shortKey(state.identity.publicKey);
-    button.title = 'Sessão, chave e cofre';
+
+    var me = state.identity.publicKey;
+    var data = profileData(profileOf(me));
+    var name = data.name || state.identity.username || shortKey(me);
+
+    var nameNode = byId('nav-profile-name');
+    if (nameNode) nameNode.textContent = name;
+    var menuNameNode = byId('nav-profile-name-menu');
+    if (menuNameNode) menuNameNode.textContent = name;
+    var handleNode = byId('nav-profile-handle');
+    if (handleNode) {
+      handleNode.textContent = '@' + (state.identity.username || shortKey(me));
+    }
+
+    fillAvatarBox(byId('nav-avatar'), name, me, data.image);
+    fillAvatarBox(byId('nav-avatar-menu'), name, me, data.image);
+
+    button.title = 'Abrir menu do perfil de ' + name;
+    button.setAttribute('aria-label', 'Abrir menu do perfil de ' + name);
+
+    var profileLink = byId('menu-profile');
+    if (profileLink) profileLink.href = profileHref(me);
+    var editLink = byId('menu-edit');
+    if (editLink) editLink.href = '/?view=profile-edit';
+    var settingsLink = byId('menu-settings');
+    if (settingsLink) settingsLink.href = '/?view=settings';
+
+    renderSettings();
   }
 
   /* ---------------------------------------------------------------------- */
@@ -574,7 +1072,11 @@
     var signed = await onpostt.signBlock(partial, state.identity.privateKey);
     if (typeof signed === 'string') throw new Error(signed);
 
-    var responses = await onpostt.sendBlock(signed);
+    // relay.js roteia interações apenas para relays que possuem o bloco alvo.
+    var responses =
+      RELAY && typeof RELAY.sendBlock === 'function'
+        ? await RELAY.sendBlock(signed)
+        : await onpostt.sendBlock(signed);
     var success = responses.filter(function (response) {
       return response && response.status === 'success';
     });
@@ -607,6 +1109,11 @@
 
     var repostPost = state.repostPosts.get(id);
     if (repostPost) return repostPost;
+
+    var repost = state.repostBlocks.find(function (candidate) {
+      return candidate && candidate.id === id;
+    });
+    if (repost) return repost;
 
     var found = null;
     state.comments.forEach(function (comments) {
@@ -687,6 +1194,14 @@
     return '/perfil.html?pubkey=' + encodeURIComponent(pubkey);
   }
 
+  function postDetailUrl(postId, repostId) {
+    var params = new URLSearchParams();
+    if (postId) params.set('post', postId);
+    if (repostId) params.set('repost', repostId);
+    var query = params.toString();
+    return '/post.html' + (query ? '?' + query : '');
+  }
+
   function profileLink(className, pubkey, label) {
     var link = el('a', className, label);
     link.href = profileHref(pubkey);
@@ -716,6 +1231,34 @@
       .catch(function () {
         /* sem perfil público: usa a pubkey abreviada */
       });
+  }
+
+  function loadProfilesForKeys(pubkeys) {
+    var missing = Array.from(new Set(pubkeys || [])).filter(function (pubkey) {
+      return (
+        typeof pubkey === 'string' &&
+        pubkey &&
+        !state.profiles.has(pubkey) &&
+        !state.profileLookups.has(pubkey)
+      );
+    });
+
+    missing.forEach(function (pubkey) {
+      state.profileLookups.add(pubkey);
+    });
+
+    return Promise.all(
+      missing.map(function (pubkey) {
+        return onpostt
+          .list({ mode: 'profile', pubkey: pubkey, limit: 1 })
+          .then(function (profiles) {
+            if (profiles && profiles[0]) keepProfile(profiles[0]);
+          })
+          .catch(function () {
+            /* sem perfil público: usa as iniciais da pubkey */
+          });
+      })
+    );
   }
 
   function repostPostFor(block) {
@@ -804,12 +1347,22 @@
       });
   }
 
+  function updateFeedMoreButton() {
+    var button = byId('load-more-posts');
+    if (!button) return;
+    var visible = Boolean(state.feedHasMore && !state.topicFilter);
+    button.hidden = !visible;
+    button.disabled = state.feedLoadingMore;
+    button.textContent = state.feedLoadingMore ? 'Carregando…' : 'Carregar mais posts';
+  }
+
   function renderFeed() {
     var list = byId('feed-list');
     var empty = byId('feed-empty');
     if (!list) return;
 
     clear(list);
+    updateFeedMoreButton();
     var items = state.topicFilter
       ? buildTopicItems().filter(feedItemAllowed)
       : buildFeedItems().filter(feedItemAllowed);
@@ -863,6 +1416,124 @@
     renderFeed();
   }
 
+  function renderPostSurfaces() {
+    if (!POST_PAGE) renderFeed();
+    if (state.detail) renderPostDetail();
+  }
+
+  function renderPostDetail() {
+    var container = byId('post-detail');
+    if (!container) return;
+
+    clear(container);
+    var detail = state.detail;
+    if (!detail || !detail.post) {
+      container.appendChild(
+        el('p', 'post-detail-empty', 'Publicação não encontrada ou indisponível.')
+      );
+      return;
+    }
+
+    var title = byId('post-detail-title');
+    if (title) title.textContent = detail.repost ? 'Repost' : 'Publicação';
+
+    var article = renderPost(detail.post, detail.repost);
+    article.classList.add('post-detail-card');
+    container.appendChild(article);
+  }
+
+  async function ensureDetailProfiles(post, repost, targetId) {
+    var pubkeys = new Set();
+    if (post && post.pubkey) pubkeys.add(post.pubkey);
+    if (repost && repost.pubkey) pubkeys.add(repost.pubkey);
+    (state.comments.get(targetId) || []).forEach(function (comment) {
+      if (comment && comment.pubkey) pubkeys.add(comment.pubkey);
+    });
+
+    var missing = [];
+    pubkeys.forEach(function (pubkey) {
+      if (!state.profiles.has(pubkey) && !state.profileLookups.has(pubkey)) {
+        missing.push(pubkey);
+      }
+    });
+    missing.forEach(function (pubkey) {
+      state.profileLookups.add(pubkey);
+    });
+
+    await Promise.all(
+      missing.map(function (pubkey) {
+        return onpostt
+          .list({ mode: 'profile', app: APP, pubkey: pubkey, limit: 1 })
+          .then(function (profiles) {
+            if (profiles && profiles[0]) state.profiles.set(pubkey, profiles[0]);
+          })
+          .catch(function () {
+            /* sem perfil público: usa a pubkey abreviada */
+          });
+      })
+    );
+  }
+
+  async function openPostDetailPage(postId, repostId) {
+    var post = null;
+    var repost = null;
+    var postKey = String(postId || '').trim();
+    var repostKey = String(repostId || '').trim();
+
+    if (repostKey) {
+      repost = findKnownBlock(repostKey);
+      if (!repost || repost.mode !== 'repost') repost = await loadBlockById(repostKey);
+      if (repost && repost.mode === 'repost') {
+        var repostTarget = queryValue(repost, 'block');
+        post = findKnownBlock(repostTarget);
+        if (!post || post.mode !== 'post') post = await loadBlockById(repostTarget);
+      }
+    }
+
+    if (!post && postKey) {
+      var candidate = findKnownBlock(postKey);
+      if (!candidate || (candidate.mode !== 'post' && candidate.mode !== 'repost')) {
+        candidate = await loadBlockById(postKey);
+      }
+      if (candidate && candidate.mode === 'repost') {
+        repost = candidate;
+        var target = queryValue(candidate, 'block');
+        post = findKnownBlock(target);
+        if (!post || post.mode !== 'post') post = await loadBlockById(target);
+      } else if (candidate && candidate.mode === 'post') {
+        post = candidate;
+      }
+    }
+
+    if (!post || post.mode !== 'post') {
+      state.detail = null;
+      renderPostDetail();
+      switchView('post');
+      return false;
+    }
+
+    if (repost && repost.mode !== 'repost') repost = null;
+
+    // Mantém os blocos conhecidos para rotear notificações e interações.
+    if (!state.posts.some(function (item) { return item.id === post.id; })) {
+      state.posts.unshift(post);
+    }
+    if (repost && !state.repostBlocks.some(function (item) { return item.id === repost.id; })) {
+      state.repostBlocks.unshift(repost);
+    }
+    if (repost) state.repostPosts.set(post.id, post);
+
+    var targetId = repost ? repost.id : post.id;
+    state.detail = { post: post, repost: repost, targetId: targetId };
+    state.openComments.add(targetId);
+
+    await loadCommentsFor(targetId);
+    await ensureDetailProfiles(post, repost, targetId);
+    renderPostDetail();
+    switchView('post');
+    return true;
+  }
+
   /* ---------------------------------------------------------------------- */
   /* Tópicos e trending                                                     */
   /* ---------------------------------------------------------------------- */
@@ -879,41 +1550,11 @@
 
     box.hidden = false;
     state.composeTopics.forEach(function (topic) {
-      var chip = el('span', 'topic-chip topic-chip-editable', topicLabel(topic));
-      var remove = el('button', 'topic-chip-remove', '×');
-      remove.type = 'button';
-      remove.dataset.topic = topic;
-      remove.setAttribute('aria-label', 'Remover tópico ' + topicLabel(topic));
-      chip.appendChild(remove);
+      var chip = el('span', 'topic-chip topic-chip-detected', topicLabel(topic));
+      chip.title = 'Tópico detectado no texto';
+      chip.setAttribute('aria-label', 'Tópico detectado no texto: ' + topicLabel(topic));
       box.appendChild(chip);
     });
-  }
-
-  function addComposeTopic(value) {
-    var topic = normalizeTopic(value);
-    if (!topic) {
-      reportError('Tópico inválido. Use letras, números, ponto, hífen ou sublinhado.');
-      return false;
-    }
-    if (state.composeTopics.indexOf(topic) !== -1) {
-      reportError('Esse tópico já está no post.');
-      return false;
-    }
-    if (state.composeTopics.length >= MAX_TOPICS) {
-      reportError('Máximo de ' + MAX_TOPICS + ' tópicos por post.');
-      return false;
-    }
-
-    state.composeTopics.push(topic);
-    renderComposeTopics();
-    return true;
-  }
-
-  function removeComposeTopic(topic) {
-    state.composeTopics = state.composeTopics.filter(function (candidate) {
-      return candidate !== topic;
-    });
-    renderComposeTopics();
   }
 
   function updateTopicUrl() {
@@ -990,6 +1631,11 @@
     var topic = normalizeTopic(value);
     if (!topic) {
       reportError('Tópico inválido.');
+      return;
+    }
+
+    if (POST_PAGE) {
+      window.location.assign('/?view=feed&topic=' + encodeURIComponent(topic));
       return;
     }
 
@@ -1077,20 +1723,27 @@
     renderTrending();
 
     try {
-      var url =
-        ORIGIN +
+      var path =
         '/api/trending?app=' +
         encodeURIComponent(APP) +
         '&limit=' +
         TRENDING_LIMIT +
         '&window=' +
         TRENDING_WINDOW_SECONDS;
-      var response = await fetch(url, {
-        headers: { Accept: 'application/json' },
-        credentials: 'omit',
-      });
-      if (!response.ok) throw new Error('HTTP ' + response.status);
-      var body = await response.json();
+      var body;
+      if (RELAY && typeof RELAY.fetchJSON === 'function') {
+        body = await RELAY.fetchJSON(path, {
+          headers: { Accept: 'application/json' },
+          credentials: 'omit',
+        });
+      } else {
+        var response = await fetch(RELAY.url(path), {
+          headers: { Accept: 'application/json' },
+          credentials: 'omit',
+        });
+        if (!response.ok) throw new Error('HTTP ' + response.status);
+        body = await response.json();
+      }
       if (!body || !Array.isArray(body.topics)) throw new Error('Resposta inválida do relay.');
 
       state.trending = body.topics
@@ -1123,7 +1776,7 @@
     var content = post.content;
 
     if (typeof content === 'string') {
-      if (content) article.appendChild(el('p', 'post-content', content));
+      appendPostText(article, content);
       return;
     }
 
@@ -1140,7 +1793,7 @@
     }
 
     var text = typeof content.text === 'string' ? content.text : '';
-    if (text) article.appendChild(el('p', 'post-content', text));
+    if (text) appendPostText(article, text);
 
     if (content.image && typeof content.image === 'object') {
       var image = normalizeImage(content.image);
@@ -1188,17 +1841,20 @@
 
   function renderPost(post, repost) {
     var from = post.pubkey;
+    var social = repost || post;
     var profile = profileData(profileOf(from));
     var name = profile.name || shortKey(from);
     var isMine = from === state.identity.publicKey;
-    var liked = state.likedByMe.has(post.id);
-    var likeCount = state.likes.get(post.id) || 0;
+    var liked = state.likedByMe.has(social.id);
+    var likeCount = state.likes.get(social.id) || 0;
     var reposted = state.repostedByMe.has(post.id);
     var repostCount = state.reposts.get(post.id) || 0;
-    var comments = state.comments.get(post.id) || [];
+    var comments = state.comments.get(social.id) || [];
+    var commentsLoading = state.commentLoading.has(social.id);
 
     var article = el('article', 'post' + (repost ? ' post-repost' : ''));
     article.dataset.block = post.id;
+    article.dataset.social = social.id;
     if (repost) article.dataset.repost = repost.id;
 
     if (repost) {
@@ -1233,36 +1889,17 @@
     renderPostContent(article, post);
     renderTopics(article, post);
 
-    var reactions = state.reactions.get(post.id) || new Map();
-    var reactionBar = el('div', 'reaction-bar');
-    reactionBar.setAttribute('aria-label', 'Reações');
-    REACTIONS.forEach(function (emoji) {
-      var count = reactions.get(emoji) || 0;
-      var key = post.id + REACTION_SEP + emoji;
-      var active = state.myReactions.has(key);
-      var pending = state.reactionPending.has(key);
-      var reactionButton = el('button', 'reaction-button' + (active ? ' active' : ''), emoji + (count ? ' ' + count : ''));
-      reactionButton.type = 'button';
-      reactionButton.disabled = pending;
-      reactionButton.dataset.action = 'reaction';
-      reactionButton.dataset.block = post.id;
-      reactionButton.dataset.emoji = emoji;
-      reactionButton.setAttribute(
-        'aria-label',
-        (active ? 'Remover reação ' : 'Reagir com ') + emoji + (count ? ' (' + count + ')' : '')
-      );
-      reactionBar.appendChild(reactionButton);
-    });
-    article.appendChild(reactionBar);
-
     var actions = el('div', 'post-actions');
 
     var likeButton = el('button', 'action-button' + (liked ? ' liked' : ''), (liked ? '♥ ' : '♡ ') + 'Curtir' + (likeCount ? ' (' + likeCount + ')' : ''));
     likeButton.type = 'button';
     likeButton.dataset.action = 'like';
-    likeButton.dataset.block = post.id;
+    likeButton.dataset.block = social.id;
     actions.appendChild(likeButton);
 
+    // O botão de repost continua apontando para o post original. Em um card de
+    // repost ele mostra/remove o repost do usuário; curtidas e comentários,
+    // porém, pertencem ao bloco do repost (social.id).
     var repostButton = el(
       'button',
       'action-button' + (reposted ? ' reposted' : ''),
@@ -1274,13 +1911,22 @@
     repostButton.dataset.block = post.id;
     actions.appendChild(repostButton);
 
-    var commentButton = el('button', 'action-button', 'Comentar' + (comments.length ? ' (' + comments.length + ')' : ''));
+    var commentButton = el(
+      'button',
+      'action-button',
+      'Comentar' +
+        (commentsLoading && comments.length === 0
+          ? '…'
+          : comments.length
+            ? ' (' + comments.length + ')'
+            : '')
+    );
     commentButton.type = 'button';
     commentButton.dataset.action = 'comment';
-    commentButton.dataset.block = post.id;
+    commentButton.dataset.block = social.id;
     actions.appendChild(commentButton);
 
-    if (isMine) {
+    if (!repost && isMine) {
       var deleteButton = el('button', 'action-button', 'Excluir');
       deleteButton.type = 'button';
       deleteButton.dataset.action = 'delete';
@@ -1288,12 +1934,16 @@
       actions.appendChild(deleteButton);
     }
 
-    var idLabel = el('span', 'block-id', 'id ' + String(post.id).slice(0, 12));
+    var idLabel = el(
+      'span',
+      'block-id',
+      (repost ? 'repost id ' : 'id ') + String(social.id).slice(0, 12)
+    );
     actions.appendChild(idLabel);
     article.appendChild(actions);
 
-    if (state.openComments.has(post.id)) {
-      article.appendChild(renderComments(post, comments));
+    if (state.openComments.has(social.id)) {
+      article.appendChild(renderComments(social, comments));
     }
 
     return article;
@@ -1349,8 +1999,11 @@
     var sorted = comments.slice().sort(function (a, b) {
       return a.created_at - b.created_at;
     });
+    var loading = state.commentLoading.has(post.id);
 
-    if (sorted.length === 0) {
+    if (loading && sorted.length === 0) {
+      list.appendChild(el('p', 'faint small mb-0', 'Carregando comentários…'));
+    } else if (sorted.length === 0) {
       list.appendChild(el('p', 'faint small mb-0', 'Nenhum comentário ainda.'));
     } else {
       var ids = new Set(
@@ -1506,7 +2159,7 @@
         await notifyInteraction(blockId, output.block, 'like');
       }
 
-      renderFeed();
+      renderPostSurfaces();
       scheduleRefresh();
     } catch (error) {
       reportError(error.message);
@@ -1563,6 +2216,22 @@
         state.reposts.set(blockId, Math.max(0, (state.reposts.get(blockId) || 1) - 1));
         state.repostedByMe.delete(blockId);
         forgetRepost(blockId);
+        if (
+          state.detail &&
+          state.detail.repost &&
+          state.detail.repost.pubkey === state.identity.publicKey &&
+          queryValue(state.detail.repost, 'block') === blockId
+        ) {
+          state.detail = {
+            post: state.detail.post,
+            repost: null,
+            targetId: state.detail.post.id,
+          };
+          state.openComments.add(state.detail.targetId);
+          if (POST_PAGE && window.history && typeof window.history.replaceState === 'function') {
+            window.history.replaceState(null, '', postDetailUrl(state.detail.post.id));
+          }
+        }
         toast('Repost removido.');
       } else {
         state.reposts.set(blockId, (state.reposts.get(blockId) || 0) + 1);
@@ -1572,7 +2241,7 @@
         toast('Post repostado.');
       }
 
-      renderFeed();
+      renderPostSurfaces();
       scheduleRefresh();
     } catch (error) {
       reportError(error.message);
@@ -1609,29 +2278,6 @@
     return output;
   }
 
-  async function handleReaction(button, blockId, emoji) {
-    var key = blockId + REACTION_SEP + emoji;
-    if (state.reactionPending.has(key)) return;
-    if (!onpostt.isValidReaction(emoji)) {
-      reportError('Reação inválida.');
-      return;
-    }
-
-    state.reactionPending.add(key);
-    button.disabled = true;
-
-    try {
-      await toggleReaction(blockId, emoji);
-      renderFeed();
-      scheduleRefresh();
-    } catch (error) {
-      reportError(error.message);
-    } finally {
-      state.reactionPending.delete(key);
-      button.disabled = false;
-    }
-  }
-
   async function handleCommentReaction(button, commentId, emoji) {
     var likeKey = commentId + REACTION_SEP + COMMENT_LIKE;
     var dislikeKey = commentId + REACTION_SEP + COMMENT_DISLIKE;
@@ -1663,16 +2309,25 @@
       state.reactionPending.delete(likeKey);
       state.reactionPending.delete(dislikeKey);
       button.disabled = false;
-      renderFeed();
+      renderPostSurfaces();
     }
   }
 
   function handleReply(blockId, commentId) {
     state.replyTo.set(blockId, commentId);
     state.openComments.add(blockId);
-    renderFeed();
+    renderPostSurfaces();
+    if (!state.commentLoaded.has(blockId)) {
+      loadCommentsFor(blockId).catch(function (error) {
+        reportError(error.message);
+      });
+    }
 
-    var form = byId('feed-list').querySelector('.comment-form[data-block="' + blockId + '"]');
+    var form =
+      (byId('feed-list') &&
+        byId('feed-list').querySelector('.comment-form[data-block="' + blockId + '"]')) ||
+      (byId('post-detail') &&
+        byId('post-detail').querySelector('.comment-form[data-block="' + blockId + '"]'));
     if (form) {
       var input = form.querySelector('input');
       if (input) input.focus();
@@ -1681,13 +2336,21 @@
 
   function handleCancelReply(blockId) {
     state.replyTo.delete(blockId);
-    renderFeed();
+    renderPostSurfaces();
   }
 
   function handleCommentToggle(blockId) {
-    if (state.openComments.has(blockId)) state.openComments.delete(blockId);
-    else state.openComments.add(blockId);
-    renderFeed();
+    if (state.openComments.has(blockId)) {
+      state.openComments.delete(blockId);
+      renderPostSurfaces();
+      return;
+    }
+
+    state.openComments.add(blockId);
+    renderPostSurfaces();
+    loadCommentsFor(blockId).catch(function (error) {
+      reportError(error.message);
+    });
   }
 
   async function handleComment(form, blockId) {
@@ -1712,8 +2375,8 @@
       await notifyInteraction(blockId, output.block, 'comment');
       state.commentDrafts.delete(blockId);
       state.replyTo.delete(blockId);
-      await refreshSocial();
-      renderFeed();
+      await loadCommentsFor(blockId);
+      renderPostSurfaces();
       toast(parent ? 'Resposta publicada.' : 'Comentário publicado.');
     } catch (error) {
       reportError(error.message);
@@ -1733,8 +2396,8 @@
         app: APP,
       });
       state.replyTo.delete(blockId);
-      await refreshSocial();
-      renderFeed();
+      await loadCommentsFor(blockId);
+      renderPostSurfaces();
       toast('Comentário excluído.');
     } catch (error) {
       reportError(error.message);
@@ -1759,7 +2422,16 @@
         return queryValue(block, 'block') !== blockId;
       });
       state.openComments.delete(blockId);
-      renderFeed();
+      state.commentLoaded.delete(blockId);
+      state.commentLoading.delete(blockId);
+      if (state.detail && state.detail.post && state.detail.post.id === blockId) {
+        state.detail = null;
+        if (POST_PAGE) {
+          window.location.assign('/?view=feed');
+          return;
+        }
+      }
+      renderPostSurfaces();
       toast('Post marcado como excluído.');
     } catch (error) {
       reportError(error.message);
@@ -1776,29 +2448,79 @@
     if (!list) return;
 
     clear(list);
-    var term = state.profileQuery.trim().toLowerCase();
-    var profiles = Array.from(state.profiles.values())
-      .filter(function (profile) {
-        if (!profile || typeof profile.pubkey !== 'string') return false;
-        if (isBlockedPubkey(profile.pubkey)) return false;
-        if (!term) return true;
-        return (
-          displayName(profile.pubkey).toLowerCase().includes(term) ||
-          profile.pubkey.toLowerCase().includes(term)
-        );
-      })
-      .sort(function (a, b) {
-        return displayName(a.pubkey).localeCompare(displayName(b.pubkey), 'pt-BR');
-      });
+    var rawTerm = state.profileQuery.trim();
+    var term = rawTerm.toLowerCase();
+    var context = byId('profiles-context');
+    var loadMore = byId('load-more-profiles');
+
+    var profiles;
+    if (term) {
+      profiles = Array.from(state.profileSearchResults.values())
+        .filter(function (profile) {
+          if (!profile || typeof profile.pubkey !== 'string') return false;
+          if (isBlockedPubkey(profile.pubkey)) return false;
+          return (
+            displayName(profile.pubkey).toLowerCase().includes(term) ||
+            profile.pubkey.toLowerCase().includes(term)
+          );
+        })
+        .sort(function (a, b) {
+          return displayName(a.pubkey).localeCompare(displayName(b.pubkey), 'pt-BR');
+        });
+    } else {
+      profiles = state.suggestedPubkeys
+        .map(function (pubkey) {
+          return state.profiles.get(pubkey);
+        })
+        .filter(function (profile) {
+          return (
+            profile &&
+            typeof profile.pubkey === 'string' &&
+            !isBlockedPubkey(profile.pubkey)
+          );
+        })
+        .sort(function (a, b) {
+          return displayName(a.pubkey).localeCompare(displayName(b.pubkey), 'pt-BR');
+        });
+    }
+
+    if (context) {
+      if (term) {
+        context.textContent = state.profileSearchLoading
+          ? 'Buscando perfis no relay…'
+          : 'Resultados para “' + rawTerm + '”.';
+      } else {
+        context.textContent =
+          'Perfis sugeridos a partir de quem você segue, seus seguidores e autores do feed.';
+      }
+    }
+
+    if (loadMore) {
+      loadMore.hidden = !term || !state.profileSearchHasMore;
+      loadMore.disabled = state.profileSearchLoading;
+      loadMore.textContent = state.profileSearchLoading
+        ? 'Carregando…'
+        : 'Carregar mais perfis';
+    }
 
     if (profiles.length === 0) {
       if (empty) {
         empty.hidden = false;
         var title = empty.querySelector('p');
+        var note = empty.querySelectorAll('p')[1];
         if (title) {
           title.textContent = term
-            ? 'Nenhum perfil corresponde a “' + state.profileQuery.trim() + '”.'
-            : 'Nenhum perfil encontrado.';
+            ? state.profileSearchLoading
+              ? 'Buscando perfis…'
+              : 'Nenhum perfil corresponde a “' + rawTerm + '”.'
+            : 'Nenhum perfil sugerido ainda.';
+        }
+        if (note) {
+          note.textContent = term
+            ? state.profileSearchLoading
+              ? 'Consultando o relay.'
+              : 'Tente outro nome ou uma pubkey completa.'
+            : 'Siga alguém, interaja no feed ou busque por nome/pubkey.';
         }
       }
       return;
@@ -1808,6 +2530,115 @@
     profiles.forEach(function (profile) {
       list.appendChild(renderProfileCard(profile));
     });
+  }
+
+  function resetProfileSearch() {
+    state.profileSearchSeq += 1;
+    state.profileSearchResults = new Map();
+    state.profileSearchTerm = '';
+    state.profileSearchOffset = 0;
+    state.profileSearchHasMore = false;
+    state.profileSearchLoading = false;
+  }
+
+  async function searchProfilesFromRelay(term, options) {
+    var value = typeof term === 'string' ? term.trim() : '';
+    if (!value) {
+      resetProfileSearch();
+      renderProfiles();
+      return;
+    }
+
+    var append = Boolean(options && options.append);
+    if (append && (!state.profileSearchHasMore || state.profileSearchLoading)) return;
+
+    if (!append) {
+      state.profileSearchResults = new Map();
+      state.profileSearchOffset = 0;
+      state.profileSearchHasMore = false;
+    }
+
+    var seq = ++state.profileSearchSeq;
+    state.profileSearchTerm = value;
+    state.profileSearchLoading = true;
+    renderProfiles();
+
+    try {
+      var list;
+      if (!append && window.onpostt.isValidPublicKey(value)) {
+        // Pubkey completa é consulta exata, independente da paginação.
+        list = await onpostt.list({
+          mode: 'profile',
+          app: APP,
+          pubkey: value,
+          limit: 1,
+        });
+        list.forEach(keepProfile);
+        list.forEach(function (profile) {
+          if (profile && profile.pubkey) {
+            state.profileSearchResults.set(profile.pubkey, profile);
+          }
+        });
+        state.profileSearchOffset = 1;
+        state.profileSearchHasMore = false;
+      } else {
+        var offset = append ? state.profileSearchOffset : 0;
+        list = await onpostt.list({
+          mode: 'profile',
+          app: APP,
+          limit: PROFILE_SEARCH_PAGE,
+          offset: offset,
+        });
+        list.forEach(keepProfile);
+        list.forEach(function (profile) {
+          if (profile && profile.pubkey) {
+            state.profileSearchResults.set(profile.pubkey, profile);
+          }
+        });
+        state.profileSearchOffset = offset + PROFILE_SEARCH_PAGE;
+        state.profileSearchHasMore =
+          (list.length >= PROFILE_SEARCH_PAGE || Boolean(list.truncated)) &&
+          state.profileSearchOffset < MAX_PROFILE_SEARCH;
+      }
+    } catch (error) {
+      if (seq === state.profileSearchSeq) {
+        state.profileSearchHasMore = false;
+        reportError(error.message);
+      }
+    } finally {
+      if (seq === state.profileSearchSeq) {
+        state.profileSearchLoading = false;
+        renderProfiles();
+      }
+    }
+  }
+
+  function scheduleProfileSearch() {
+    if (profileSearchTimer) {
+      clearTimeout(profileSearchTimer);
+      profileSearchTimer = null;
+    }
+
+    var term = state.profileQuery.trim();
+    if (!term) {
+      resetProfileSearch();
+      renderProfiles();
+      return;
+    }
+
+    state.profileSearchSeq += 1;
+    state.profileSearchResults = new Map();
+    state.profileSearchOffset = 0;
+    state.profileSearchHasMore = false;
+    state.profileSearchLoading = true;
+    renderProfiles();
+
+    profileSearchTimer = setTimeout(function () {
+      profileSearchTimer = null;
+      searchProfilesFromRelay(term).catch(function (error) {
+        reportError(error.message);
+      });
+    }, 350);
   }
 
   function renderProfileCard(profile) {
@@ -1932,12 +2763,16 @@
     setBusy(button, true);
 
     try {
-      await publish({
+      var output = await publish({
         mode: 'profile',
         query: [],
         content: content,
         app: APP,
       });
+      if (output && output.block && output.block.pubkey) {
+        state.profiles.set(output.block.pubkey, output.block);
+        updateIdentityUi();
+      }
       state.profileDirty = false;
       state.pendingProfileImage = null;
       state.profileImageRemoved = false;
@@ -2071,6 +2906,10 @@
 
     try {
       await persistNotificationReads([id]);
+      // Uma atualização automática pode ter recarregado as confirmações
+      // enquanto o bloco era publicado. Reaplica o estado local confirmado.
+      state.notificationRead.add(id);
+      renderNotifications();
     } catch (error) {
       state.notificationRead.delete(id);
       renderNotifications();
@@ -2101,6 +2940,10 @@
 
     try {
       await persistNotificationReads(unread);
+      unread.forEach(function (id) {
+        state.notificationRead.add(id);
+      });
+      renderNotifications();
       toast(unread.length === 1 ? 'Notificação marcada como lida.' : unread.length + ' notificações marcadas como lidas.');
     } catch (error) {
       unread.forEach(function (id) {
@@ -2257,7 +3100,7 @@
 
   async function loadBlockById(id) {
     if (typeof id !== 'string' || !id) return null;
-    var modes = ['post', 'comment'];
+    var modes = ['post', 'repost', 'comment'];
     for (var i = 0; i < modes.length; i += 1) {
       var blocks = await onpostt.list({ mode: modes[i], app: APP, id: id, limit: 1 });
       if (blocks && blocks[0]) return blocks[0];
@@ -2268,9 +3111,10 @@
   async function openNotification(notification) {
     if (!notification || !notification.id) return;
 
-    markNotificationRead(notification.id).catch(function (error) {
-      reportError(error.message);
-    });
+    // Aguarda a confirmação de leitura antes de trocar de página. Sem isso,
+    // o redirecionamento podia cancelar a publicação e a notificação voltava
+    // como não lida ao retornar para a lista.
+    await markNotificationRead(notification.id);
 
     var kind = queryValue(notification, 'kind');
     if (kind === 'follow') {
@@ -2294,8 +3138,26 @@
       return;
     }
 
+    if (target.mode === 'repost') {
+      window.location.assign(postDetailUrl(queryValue(target, 'block'), target.id));
+      return;
+    }
+
     var postId = target.mode === 'comment' ? queryValue(target, 'block') : target.id;
     if (target.mode === 'comment') {
+      var parentBlock = findKnownBlock(postId);
+      if (!parentBlock) {
+        try {
+          parentBlock = await loadBlockById(postId);
+        } catch (error) {
+          reportError(error.message);
+        }
+      }
+      if (parentBlock && parentBlock.mode === 'repost') {
+        window.location.assign(postDetailUrl(queryValue(parentBlock, 'block'), parentBlock.id));
+        return;
+      }
+
       if (!state.comments.has(postId)) state.comments.set(postId, []);
       var comments = state.comments.get(postId);
       if (!comments.some(function (comment) { return comment.id === target.id; })) {
@@ -2399,16 +3261,33 @@
   function updateChatHeader() {
     var label = byId('chat-peer-label');
     var key = byId('chat-peer-key');
+    var avatar = byId('chat-peer-avatar');
     var input = byId('chat-input');
     var send = byId('chat-send');
     var refresh = byId('refresh-chat');
     var remove = byId('delete-chat');
     var image = byId('chat-image');
     var audio = byId('chat-audio');
+    var audioLabel = byId('chat-audio-label');
     var hasPeer = Boolean(state.peer);
 
     if (label) label.textContent = hasPeer ? peerLabel(state.peer) : 'Nenhuma conversa';
     if (key) key.textContent = hasPeer ? state.peer : 'Escolha um contato ao lado';
+
+    if (avatar) {
+      clear(avatar);
+      avatar.hidden = !hasPeer;
+      if (hasPeer) {
+        var peerInfo = profileData(profileOf(state.peer));
+        avatar.appendChild(
+          avatarNode(peerInfo.name || peerLabel(state.peer), state.peer, peerInfo.image)
+        );
+      }
+    }
+
+    var layout = byId('direct-layout');
+    if (layout && !hasPeer) layout.classList.remove('thread-open');
+
     if (input) input.disabled = !hasPeer;
     if (send) send.disabled = !hasPeer;
     if (refresh) refresh.disabled = !hasPeer;
@@ -2417,8 +3296,12 @@
       image.disabled = !hasPeer || state.chatMediaBusy || Boolean(state.audioRecording);
     }
     if (audio) {
+      var audioText = state.audioRecording ? 'Parar e enviar' : 'Gravar áudio';
       audio.disabled = !hasPeer || (state.chatMediaBusy && !state.audioRecording);
-      audio.textContent = state.audioRecording ? 'Parar e enviar' : 'Gravar áudio';
+      if (audioLabel) audioLabel.textContent = audioText;
+      else audio.textContent = audioText;
+      audio.title = audioText;
+      audio.setAttribute('aria-label', audioText);
       audio.classList.toggle('recording', Boolean(state.audioRecording));
     }
   }
@@ -2465,17 +3348,62 @@
       return;
     }
 
+    var me = state.identity ? state.identity.publicKey : '';
     var entries = Array.from(peers.entries()).map(function (entry) {
+      var pubkey = entry[0];
+      var messages = conversationMessagesFor(pubkey);
+      var last = messages.length
+        ? messages.slice().sort(function (a, b) {
+            return (Number(a.created_at) || 0) - (Number(b.created_at) || 0);
+          })[messages.length - 1]
+        : null;
+      var lastAt = last ? Number(last.created_at) || 0 : 0;
+      var mineLast = Boolean(last && me && sameKey(queryValue(last, 'from'), me));
+      var cached = last ? state.chat.get(logicalId(last)) : null;
+      var preview = '';
+
+      if (cached && cached.payload) {
+        preview =
+          cached.payload.text ||
+          (cached.payload.image ? '📷 Imagem' : cached.payload.audio ? '🎙️ Áudio' : '');
+      }
+      if (!preview) {
+        preview = last
+          ? mineLast
+            ? 'Você: mensagem'
+            : 'Mensagem recebida'
+          : 'Nenhuma mensagem';
+      }
+
       return {
-        pubkey: entry[0],
+        pubkey: pubkey,
         name: entry[1],
-        unread: unreadMessagesFor(entry[0]).length,
+        unread: unreadMessagesFor(pubkey).length,
+        lastAt: lastAt,
+        preview: preview,
       };
     });
+
+    var query = state.chatQuery.trim().toLowerCase();
+    if (query) {
+      entries = entries.filter(function (entry) {
+        return (
+          entry.name.toLowerCase().includes(query) ||
+          entry.pubkey.toLowerCase().includes(query)
+        );
+      });
+    }
+
+    if (entries.length === 0) {
+      list.appendChild(el('p', 'faint small mb-0', 'Nenhuma conversa encontrada.'));
+      updateMessageBadge();
+      return;
+    }
 
     entries
       .sort(function (a, b) {
         if (a.unread !== b.unread) return b.unread - a.unread;
+        if (a.lastAt !== b.lastAt) return b.lastAt - a.lastAt;
         return a.name.localeCompare(b.name, 'pt-BR');
       })
       .forEach(function (entry) {
@@ -2490,6 +3418,7 @@
         );
         button.type = 'button';
         button.dataset.pubkey = pubkey;
+        button.title = name + ' · ' + shortKey(pubkey);
         button.setAttribute(
           'aria-label',
           unread
@@ -2499,14 +3428,30 @@
 
         var profileInfo = profileData(profileOf(pubkey));
         button.appendChild(avatarNode(name, pubkey, profileInfo.image));
+
         var meta = el('div', 'contact-meta');
         meta.appendChild(el('strong', '', name));
-        if (profileInfo.name) meta.appendChild(el('small', '', shortKey(pubkey)));
+        meta.appendChild(
+          el(
+            'small',
+            'contact-preview',
+            unread
+              ? 'Nova mensagem'
+              : entry.preview
+          )
+        );
         button.appendChild(meta);
 
+        var side = el('div', 'contact-side');
+        side.appendChild(
+          el('span', 'contact-time', entry.lastAt ? formatRelative(entry.lastAt) : '')
+        );
         if (unread) {
-          button.appendChild(el('span', 'contact-badge', unread > 99 ? '99+' : String(unread)));
+          side.appendChild(
+            el('span', 'contact-badge', unread > 99 ? '99+' : String(unread))
+          );
         }
+        button.appendChild(side);
 
         list.appendChild(button);
       });
@@ -2714,7 +3659,7 @@
     }
 
     var messages = Array.from(state.chat.values()).sort(function (a, b) {
-      return a.block.created_at - b.block.created_at;
+      return (Number(a.block.created_at) || 0) - (Number(b.block.created_at) || 0);
     });
 
     if (messages.length === 0) {
@@ -2722,10 +3667,32 @@
       return;
     }
 
-    messages.forEach(function (entry) {
+    var me = state.identity.publicKey;
+    var lastDay = '';
+
+    messages.forEach(function (entry, index) {
       var block = entry.block;
-      var mine = sameKey(queryValue(block, 'from'), state.identity.publicKey);
-      var bubble = el('div', 'message' + (mine ? ' mine' : '') + (entry.text === null ? ' failed' : ''));
+      var mine = sameKey(queryValue(block, 'from'), me);
+      var day = formatDayLabel(block.created_at);
+
+      if (day && day !== lastDay) {
+        list.appendChild(el('div', 'message-date', day));
+        lastDay = day;
+      }
+
+      var bubble = el(
+        'div',
+        'message' + (mine ? ' mine' : '') + (entry.text === null ? ' failed' : '')
+      );
+      var prev = messages[index - 1];
+      var next = messages[index + 1];
+      var prevMine = prev && sameKey(queryValue(prev.block, 'from'), me);
+      var nextMine = next && sameKey(queryValue(next.block, 'from'), me);
+
+      if (!prev || prevMine !== mine) bubble.classList.add('group-start');
+      if (!next || nextMine !== mine) bubble.classList.add('group-end');
+      bubble.dataset.mine = mine ? 'true' : 'false';
+      bubble.title = formatTime(block.created_at);
 
       if (entry.text === null) {
         bubble.appendChild(el('span', '', '[não foi possível descriptografar]'));
@@ -2859,6 +3826,20 @@
     state.chatUnsubs.push(first, second);
   }
 
+  function setNewChatFormOpen(open) {
+    var form = byId('open-chat-form');
+    if (!form) return;
+    form.hidden = !open;
+
+    var toggle = byId('toggle-new-chat');
+    if (toggle) toggle.setAttribute('aria-expanded', open ? 'true' : 'false');
+
+    if (open) {
+      var input = byId('peer-input');
+      if (input) input.focus();
+    }
+  }
+
   async function openChat(peer) {
     if (!peer || !onpostt.isValidPublicKey(peer)) {
       toast('Pubkey inválida. Use 66 ou 130 caracteres hex.', true);
@@ -2873,8 +3854,17 @@
       return;
     }
 
+    // Fora da página dedicada, "Conversar" leva para messages.html em vez de
+    // abrir a view interna do index.
+    if (!MESSAGES_PAGE) {
+      window.location.assign('/messages.html?peer=' + encodeURIComponent(peer));
+      return;
+    }
+
     stopAudioRecording(true);
+    setNewChatFormOpen(false);
     unhideChat(peer);
+    ensurePeerProfile(peer);
     stopChatSubscriptions();
     state.peer = peer;
     state.chat = new Map();
@@ -2882,6 +3872,8 @@
     state.chatUnsubs = [];
 
     updateChatHeader();
+    var layout = byId('direct-layout');
+    if (layout) layout.classList.add('thread-open');
     renderChat();
     renderContacts();
     switchView('chat');
@@ -2928,6 +3920,8 @@
     state.chatUnsubs = [];
 
     updateChatHeader();
+    var layout = byId('direct-layout');
+    if (layout) layout.classList.remove('thread-open');
     renderChat();
     renderContacts();
     toast('Conversa apagada deste dispositivo.');
@@ -3261,36 +4255,127 @@
   }
 
   async function refreshFeed() {
-    var posts = await onpostt.list({ mode: 'post', app: APP, limit: MAX_POSTS });
+    // Mantém a quantidade de páginas que o usuário já pediu. Assim um refresh
+    // ao vivo não faz o feed voltar para a primeira página.
+    var limit = Math.min(state.feedPageCount * FEED_PAGE_SIZE, MAX_FEED_PAGE_SIZE);
+    var posts = await onpostt.list({ mode: 'post', app: APP, limit: limit, offset: 0 });
     state.posts = posts.filter(function (post) {
       return post && post.mode === 'post';
     });
+    state.feedOffset = posts.length;
+    state.feedHasMore =
+      state.feedOffset >= limit && state.feedOffset < MAX_FEED_PAGE_SIZE;
+    if (posts.truncated) state.feedHasMore = true;
     renderFeed();
   }
 
-  async function refreshProfiles() {
-    var profiles = await onpostt.list({ mode: 'profile', app: APP, limit: 200 });
-    var map = new Map();
-    profiles.forEach(function (profile) {
-      if (profile && profile.pubkey) map.set(profile.pubkey, profile);
-    });
+  async function loadMoreFeed() {
+    if (state.feedLoadingMore || !state.feedHasMore || state.topicFilter) return;
+    state.feedLoadingMore = true;
+    updateFeedMoreButton();
 
-    // Mantém perfis já carregados para não perder a foto de quem comentou
-    // quando o perfil não aparece na página mais recente.
-    state.profiles.forEach(function (profile, pubkey) {
-      if (!map.has(pubkey)) map.set(pubkey, profile);
-    });
+    try {
+      var posts = await onpostt.list({
+        mode: 'post',
+        app: APP,
+        limit: FEED_PAGE_SIZE,
+        offset: state.feedOffset,
+      });
+      var existing = new Set(
+        state.posts
+          .map(function (post) {
+            return post && post.id;
+          })
+          .filter(Boolean)
+      );
+      var added = posts.filter(function (post) {
+        return post && post.mode === 'post' && !existing.has(post.id);
+      });
+      if (added.length) state.posts = state.posts.concat(added);
+      state.feedOffset += posts.length;
+      state.feedPageCount += 1;
+      state.feedHasMore =
+        posts.length >= FEED_PAGE_SIZE || Boolean(posts.truncated);
+      renderFeed();
 
-    // Mantém o próprio perfil se ele ainda não chegou na consulta.
-    if (!map.has(state.identity.publicKey) && state.profiles.has(state.identity.publicKey)) {
-      map.set(state.identity.publicKey, state.profiles.get(state.identity.publicKey));
+      if (added.length) {
+        // Só carrega os dados extras dos novos posts quando o usuário pede.
+        await Promise.all([refreshSocial(), refreshSuggestedProfiles()]);
+        renderPostSurfaces();
+      }
+    } catch (error) {
+      reportError(error.message);
+    } finally {
+      state.feedLoadingMore = false;
+      updateFeedMoreButton();
     }
+  }
 
-    state.profiles = map;
+  async function refreshProfiles() {
+    // Antes o app baixava 200 perfis globais em toda atualização. Agora só o
+    // próprio perfil é atualizado aqui; os demais são carregados por demanda.
+    var me = state.identity.publicKey;
+    var profiles = await onpostt.list({ mode: 'profile', app: APP, pubkey: me, limit: 1 });
+    if (profiles && profiles[0]) keepProfile(profiles[0]);
+
     fillProfileForm();
+    updateIdentityUi();
     renderProfiles();
     renderContacts();
     updateChatHeader();
+  }
+
+  function collectSuggestedPubkeys() {
+    var seen = new Set([state.identity.publicKey]);
+    var list = [];
+
+    function add(pubkey) {
+      if (typeof pubkey !== 'string' || !pubkey || seen.has(pubkey)) return;
+      seen.add(pubkey);
+      list.push(pubkey);
+    }
+
+    // Autores visíveis primeiro, para o feed não ficar só com pubkeys
+    // abreviadas; depois entram as relações e demais interações conhecidas.
+    state.posts.forEach(function (post) {
+      if (post) add(post.pubkey);
+    });
+    state.topicPosts.forEach(function (post) {
+      if (post) add(post.pubkey);
+    });
+    state.repostBlocks.forEach(function (block) {
+      if (block) add(block.pubkey);
+    });
+    state.repostPosts.forEach(function (post) {
+      if (post) add(post.pubkey);
+    });
+    state.following.forEach(add);
+    state.followers.forEach(add);
+    state.comments.forEach(function (comments) {
+      comments.forEach(function (comment) {
+        if (comment) add(comment.pubkey);
+      });
+    });
+    state.notifications.forEach(function (notification) {
+      if (notification) add(notification.pubkey);
+    });
+
+    return list.slice(0, MAX_PROFILE_SUGGESTIONS);
+  }
+
+  async function refreshSuggestedProfiles() {
+    var candidates = collectSuggestedPubkeys();
+    state.suggestedPubkeys = candidates;
+
+    await loadProfilesForKeys(candidates);
+
+    // Sem relações/feed, mostra ao menos o próprio perfil em vez de uma lista
+    // global de desconhecidos.
+    if (state.suggestedPubkeys.length === 0 && state.profiles.has(state.identity.publicKey)) {
+      state.suggestedPubkeys = [state.identity.publicKey];
+    }
+
+    renderProfiles();
   }
 
   async function refreshSocial() {
@@ -3298,7 +4383,7 @@
 
     var results = await Promise.all([
       onpostt.list({ mode: 'like', app: APP, limit: MAX_SOCIAL }),
-      onpostt.list({ mode: 'comment', app: APP, limit: MAX_SOCIAL }),
+      onpostt.list({ mode: 'comment', app: APP, limit: MAX_COMMENT_INDEX }),
       onpostt.list({ mode: 'reaction', app: APP, limit: MAX_SOCIAL }),
       onpostt.list({ mode: 'repost', app: APP, limit: MAX_SOCIAL }),
       onpostt.list({ mode: 'follow', app: APP, query: [['follower', me]], limit: MAX_SOCIAL }),
@@ -3322,6 +4407,22 @@
       if (!target) return;
       if (!comments.has(target)) comments.set(target, []);
       comments.get(target).push(block);
+    });
+
+    // A consulta acima é só um índice recente para contadores. Se uma thread
+    // já foi aberta, preserva os comentários completos carregados sob demanda.
+    state.commentLoaded.forEach(function (target) {
+      var loaded = state.comments.get(target) || [];
+      if (!loaded.length) return;
+      if (!comments.has(target)) comments.set(target, []);
+      var merged = new Map();
+      comments.get(target).forEach(function (comment) {
+        if (comment && comment.id) merged.set(comment.id, comment);
+      });
+      loaded.forEach(function (comment) {
+        if (comment && comment.id) merged.set(comment.id, comment);
+      });
+      comments.set(target, Array.from(merged.values()));
     });
 
     var reactions = new Map();
@@ -3465,6 +4566,33 @@
     );
   }
 
+  async function loadCommentsFor(blockId) {
+    if (!blockId || state.commentLoading.has(blockId)) return;
+    state.commentLoading.add(blockId);
+    state.commentLoaded.delete(blockId);
+    if (state.openComments.has(blockId)) renderPostSurfaces();
+
+    try {
+      var comments = await onpostt.list({
+        mode: 'comment',
+        app: APP,
+        query: [['block', blockId]],
+        limit: MAX_COMMENTS_PER_POST,
+      });
+      var list = comments.filter(function (comment) {
+        return comment && comment.mode === 'comment';
+      });
+      state.comments.set(blockId, list);
+      state.commentLoaded.add(blockId);
+      await refreshCommenterProfiles();
+    } catch (error) {
+      reportError(error.message);
+    } finally {
+      state.commentLoading.delete(blockId);
+      renderPostSurfaces();
+    }
+  }
+
   async function refreshCommenterProfiles() {
     var pubkeys = new Set();
     state.comments.forEach(function (comments) {
@@ -3509,6 +4637,36 @@
     state.refreshing = true;
 
     try {
+      // messages.html não precisa baixar feed, trending e notificações.
+      if (MESSAGES_PAGE) {
+        await Promise.all([refreshProfiles(), refreshSocial(), refreshInbox()]);
+        renderContacts();
+        updateChatHeader();
+        return;
+      }
+
+      // post.html só precisa da publicação aberta, dos perfis e das interações.
+      if (POST_PAGE) {
+        await Promise.all([
+          refreshProfiles(),
+          refreshSocial(),
+          refreshNotifications(),
+          refreshInbox(),
+        ]);
+        await refreshCommenterProfiles();
+        if (
+          state.detail &&
+          state.detail.repost &&
+          !state.repostBlocks.some(function (block) {
+            return block.id === state.detail.repost.id;
+          })
+        ) {
+          state.repostBlocks.unshift(state.detail.repost);
+        }
+        renderPostDetail();
+        return;
+      }
+
       await Promise.all([
         refreshFeed(),
         refreshProfiles(),
@@ -3520,11 +4678,14 @@
       ]);
       await Promise.all([refreshCommenterProfiles(), refreshRepostPosts()]);
       await refreshRepostProfiles();
+      await refreshSuggestedProfiles();
       // `refreshFeed` pode terminar antes de curtidas/comentários/reações.
       // Renderiza de novo com todos os estados atualizados.
-      renderFeed();
+      renderPostSurfaces();
       renderProfiles();
       renderNotifications();
+      renderContacts();
+      updateChatHeader();
     } catch (error) {
       reportError(error.message || 'Falha ao atualizar o demo.');
     } finally {
@@ -3588,22 +4749,36 @@
   /* Navegação e eventos                                                    */
   /* ---------------------------------------------------------------------- */
 
-  function switchView(name) {
+  function switchView(name, options) {
     if (name !== 'chat' && state.audioRecording) stopAudioRecording(true);
     state.view = name;
 
     document.querySelectorAll('.nav-button').forEach(function (button) {
       button.classList.toggle('active', button.dataset.view === name);
     });
+    var identityButton = byId('identity-button');
+    if (identityButton) {
+      identityButton.classList.toggle('active', name === 'profile-edit' || name === 'settings');
+    }
+    closeProfileMenu();
 
-    ['feed', 'profiles', 'notifications', 'chat', 'about'].forEach(function (view) {
+    ['feed', 'profiles', 'profile-edit', 'settings', 'notifications', 'chat', 'post', 'about'].forEach(function (view) {
       var section = byId('view-' + view);
       if (section) section.hidden = view !== name;
     });
 
+    if (options && options.skipRender) return;
+
+    if (name === 'post') renderPostDetail();
     if (name === 'profiles') {
-      fillProfileForm();
       renderProfiles();
+    }
+    if (name === 'profile-edit') {
+      fillProfileForm();
+      renderProfilePhoto();
+    }
+    if (name === 'settings') {
+      renderSettings();
     }
     if (name === 'notifications') {
       renderNotifications();
@@ -3687,10 +4862,90 @@
     }
   }
 
+  function runPostAction(button) {
+    if (!button) return;
+    if (button.dataset.action === 'topic' && button.dataset.topic) {
+      openTopic(button.dataset.topic);
+      return;
+    }
+
+    var blockId = button.dataset.block;
+    if (!blockId) return;
+    var commentId = button.dataset.comment;
+
+    if (button.dataset.action === 'like') handleLike(button, blockId);
+    if (button.dataset.action === 'repost') handleRepost(button, blockId);
+    if (button.dataset.action === 'comment-reaction' && commentId) {
+      handleCommentReaction(button, commentId, button.dataset.emoji);
+    }
+    if (button.dataset.action === 'comment') handleCommentToggle(blockId);
+    if (button.dataset.action === 'reply' && commentId) handleReply(blockId, commentId);
+    if (button.dataset.action === 'cancel-reply') handleCancelReply(blockId);
+    if (button.dataset.action === 'delete-comment' && commentId) {
+      handleDeleteComment(blockId, commentId);
+    }
+    if (button.dataset.action === 'delete') handleDelete(blockId);
+  }
+
+  function openPostFromCard(event) {
+    if (
+      event.target.closest(
+        '[data-action], a, button, input, textarea, select, label, form, .comment-box, .post-actions, .post-topics'
+      )
+    ) {
+      return;
+    }
+
+    var article = event.target.closest('.post[data-block]');
+    if (!article) return;
+    var postId = article.dataset.block;
+    if (!postId) return;
+    window.location.assign(postDetailUrl(postId, article.dataset.repost || ''));
+  }
+
+  function goBackFromPost() {
+    var referrer = document.referrer;
+    if (referrer) {
+      try {
+        if (new URL(referrer).origin === window.location.origin) {
+          window.history.back();
+          return;
+        }
+      } catch (error) {
+        /* referrer inválido: volta para o feed */
+      }
+    }
+    window.location.assign('/?view=feed');
+  }
+
   function bindEvents() {
     document.querySelectorAll('.nav-button').forEach(function (button) {
       button.addEventListener('click', function () {
-        switchView(button.dataset.view);
+        var view = button.dataset.view;
+
+        if (view === 'chat') {
+          if (!MESSAGES_PAGE) {
+            window.location.assign(
+              '/messages.html' +
+                (state.peer ? '?peer=' + encodeURIComponent(state.peer) : '')
+            );
+            return;
+          }
+
+          // Na página de conversas, o clique no item do menu volta para a
+          // lista no mobile e apenas reforça a view no desktop.
+          var layout = byId('direct-layout');
+          if (layout) layout.classList.remove('thread-open');
+          switchView('chat');
+          return;
+        }
+
+        if (MESSAGES_PAGE || POST_PAGE) {
+          window.location.assign('/?view=' + encodeURIComponent(view));
+          return;
+        }
+
+        switchView(view);
       });
     });
 
@@ -3700,8 +4955,53 @@
       });
     });
 
-    byId('identity-button').addEventListener('click', openIdentityDialog);
-    byId('about-identity').addEventListener('click', openIdentityDialog);
+    var identityButton = byId('identity-button');
+    if (identityButton) {
+      identityButton.addEventListener('click', function (event) {
+        event.stopPropagation();
+        toggleProfileMenu();
+      });
+    }
+
+    var menuKeys = byId('menu-keys');
+    if (menuKeys) {
+      menuKeys.addEventListener('click', function () {
+        closeProfileMenu();
+        openIdentityDialog();
+      });
+    }
+
+    var menuLogout = byId('menu-logout');
+    if (menuLogout) {
+      menuLogout.addEventListener('click', function () {
+        closeProfileMenu();
+        logoutIdentity();
+      });
+    }
+
+    var settingsKeys = byId('settings-keys');
+    if (settingsKeys) {
+      settingsKeys.addEventListener('click', openIdentityDialog);
+    }
+
+    var settingsLogout = byId('settings-logout');
+    if (settingsLogout) {
+      settingsLogout.addEventListener('click', logoutIdentity);
+    }
+
+    document.addEventListener('click', function (event) {
+      var menu = byId('profile-menu');
+      if (menu && event.target instanceof Node && !menu.contains(event.target)) {
+        closeProfileMenu();
+      }
+    });
+
+    document.addEventListener('keydown', function (event) {
+      if (event.key === 'Escape') closeProfileMenu();
+    });
+
+    var aboutIdentity = byId('about-identity');
+    if (aboutIdentity) aboutIdentity.addEventListener('click', openIdentityDialog);
 
     byId('compose-form').addEventListener('submit', async function (event) {
       event.preventDefault();
@@ -3713,7 +5013,8 @@
       var text = byId('post-content').value.trim();
       if (!text && !state.pendingImage) return;
 
-      var topics = state.composeTopics.slice();
+      var topics = extractTopicsFromText(text).slice(0, MAX_TOPICS);
+      state.composeTopics = topics;
       var content = text;
       if (state.pendingImage) {
         content = {
@@ -3741,9 +5042,16 @@
         });
         byId('post-content').value = '';
         state.composeTopics = [];
-        renderComposeTopics();
-        var topicInput = byId('post-topic-input');
-        if (topicInput) topicInput.value = '';
+        syncComposeTopics();
+        if (composePreviewTimer) {
+          clearTimeout(composePreviewTimer);
+          composePreviewTimer = null;
+        }
+        var composePreviews = byId('compose-link-previews');
+        if (composePreviews) {
+          clear(composePreviews);
+          composePreviews.hidden = true;
+        }
         clearPendingImage();
         state.trendingFetchedAt = 0;
         await refreshAll();
@@ -3755,34 +5063,11 @@
       }
     });
 
-    var addTopicButton = byId('add-post-topic');
-    if (addTopicButton) {
-      addTopicButton.addEventListener('click', function () {
-        var input = byId('post-topic-input');
-        if (!input) return;
-        if (addComposeTopic(input.value)) {
-          input.value = '';
-          input.focus();
-        }
-      });
-    }
-
-    var topicInput = byId('post-topic-input');
-    if (topicInput) {
-      topicInput.addEventListener('keydown', function (event) {
-        if (event.key !== 'Enter') return;
-        event.preventDefault();
-        if (addComposeTopic(topicInput.value)) {
-          topicInput.value = '';
-        }
-      });
-    }
-
-    var composeTopicChips = byId('compose-topic-chips');
-    if (composeTopicChips) {
-      composeTopicChips.addEventListener('click', function (event) {
-        var remove = event.target.closest('[data-topic]');
-        if (remove) removeComposeTopic(remove.dataset.topic);
+    var composeContent = byId('post-content');
+    if (composeContent) {
+      composeContent.addEventListener('input', function () {
+        syncComposeTopics();
+        scheduleComposeLinkPreviews();
       });
     }
 
@@ -3830,30 +5115,12 @@
     });
 
     byId('feed-list').addEventListener('click', function (event) {
-      var button = event.target.closest('[data-action]');
-      if (!button) return;
-      if (button.dataset.action === 'topic' && button.dataset.topic) {
-        openTopic(button.dataset.topic);
-        return;
-      }
-      var blockId = button.dataset.block;
-      if (!blockId) return;
-      var commentId = button.dataset.comment;
-
-      if (button.dataset.action === 'like') handleLike(button, blockId);
-      if (button.dataset.action === 'repost') handleRepost(button, blockId);
-      if (button.dataset.action === 'reaction') handleReaction(button, blockId, button.dataset.emoji);
-      if (button.dataset.action === 'comment-reaction' && commentId) {
-        handleCommentReaction(button, commentId, button.dataset.emoji);
-      }
-      if (button.dataset.action === 'comment') handleCommentToggle(blockId);
-      if (button.dataset.action === 'reply' && commentId) handleReply(blockId, commentId);
-      if (button.dataset.action === 'cancel-reply') handleCancelReply(blockId);
-      if (button.dataset.action === 'delete-comment' && commentId) {
-        handleDeleteComment(blockId, commentId);
-      }
-      if (button.dataset.action === 'delete') handleDelete(blockId);
+      runPostAction(event.target.closest('[data-action]'));
     });
+
+    // Clicar no corpo do post abre a página de detalhe. Botões, links,
+    // formulários, chips e a área de comentários continuam com suas ações.
+    byId('feed-list').addEventListener('click', openPostFromCard);
 
     byId('feed-list').addEventListener('input', function (event) {
       var input = event.target;
@@ -3868,6 +5135,28 @@
       event.preventDefault();
       handleComment(form, form.dataset.block);
     });
+
+    var detailBox = byId('post-detail');
+    if (detailBox) {
+      detailBox.addEventListener('click', function (event) {
+        runPostAction(event.target.closest('[data-action]'));
+      });
+      detailBox.addEventListener('input', function (event) {
+        var input = event.target;
+        if (input && input.dataset && input.dataset.draft) {
+          state.commentDrafts.set(input.dataset.draft, input.value);
+        }
+      });
+      detailBox.addEventListener('submit', function (event) {
+        var form = event.target.closest('.comment-form');
+        if (!form) return;
+        event.preventDefault();
+        handleComment(form, form.dataset.block);
+      });
+    }
+
+    var postBack = byId('post-back');
+    if (postBack) postBack.addEventListener('click', goBackFromPost);
 
     byId('profiles-list').addEventListener('click', function (event) {
       var button = event.target.closest('[data-action]');
@@ -3928,16 +5217,82 @@
     });
     byId('toggle-read-notifications').addEventListener('click', toggleReadNotifications);
 
-    byId('profiles-search').addEventListener('input', function (event) {
-      state.profileQuery = event.target.value || '';
-      renderProfiles();
-    });
+    var profilesSearch = byId('profiles-search');
+    if (profilesSearch) {
+      profilesSearch.addEventListener('input', function (event) {
+        state.profileQuery = event.target.value || '';
+        scheduleProfileSearch();
+      });
+
+      profilesSearch.addEventListener('keydown', function (event) {
+        if (event.key === 'Enter') {
+          event.preventDefault();
+          if (profileSearchTimer) {
+            clearTimeout(profileSearchTimer);
+            profileSearchTimer = null;
+          }
+          searchProfilesFromRelay(state.profileQuery.trim()).catch(function (error) {
+            reportError(error.message);
+          });
+        }
+        if (event.key === 'Escape') {
+          profilesSearch.value = '';
+          state.profileQuery = '';
+          resetProfileSearch();
+          renderProfiles();
+        }
+      });
+    }
+
+    var loadMoreProfiles = byId('load-more-profiles');
+    if (loadMoreProfiles) {
+      loadMoreProfiles.addEventListener('click', function () {
+        searchProfilesFromRelay(state.profileQuery.trim(), { append: true }).catch(function (error) {
+          reportError(error.message);
+        });
+      });
+    }
+
+    var loadMorePosts = byId('load-more-posts');
+    if (loadMorePosts) {
+      loadMorePosts.addEventListener('click', function () {
+        loadMoreFeed().catch(function (error) {
+          reportError(error.message);
+        });
+      });
+    }
 
     byId('open-chat-form').addEventListener('submit', function (event) {
       event.preventDefault();
       var value = byId('peer-input').value.trim();
       openChat(value);
     });
+
+    var toggleNewChat = byId('toggle-new-chat');
+    if (toggleNewChat) {
+      toggleNewChat.addEventListener('click', function () {
+        var form = byId('open-chat-form');
+        setNewChatFormOpen(Boolean(form && form.hidden));
+      });
+    }
+
+    var contactSearch = byId('contact-search');
+    if (contactSearch) {
+      contactSearch.addEventListener('input', function () {
+        state.chatQuery = contactSearch.value || '';
+        renderContacts();
+      });
+    }
+
+    var chatBack = byId('chat-back');
+    if (chatBack) {
+      chatBack.addEventListener('click', function () {
+        var layout = byId('direct-layout');
+        if (layout) layout.classList.remove('thread-open');
+        var firstContact = document.querySelector('#contact-list .contact-button');
+        if (firstContact) firstContact.focus();
+      });
+    }
 
     byId('contact-list').addEventListener('click', function (event) {
       var button = event.target.closest('[data-pubkey]');
@@ -3970,11 +5325,24 @@
       refreshAll();
     });
 
-    byId('refresh-profiles').addEventListener('click', function () {
-      Promise.all([refreshProfiles(), refreshSocial()]).catch(function (error) {
-        reportError(error.message);
+    var refreshProfilesButton = byId('refresh-profiles');
+    if (refreshProfilesButton) {
+      refreshProfilesButton.addEventListener('click', function () {
+        var term = state.profileQuery.trim();
+        if (term) {
+          searchProfilesFromRelay(term).catch(function (error) {
+            reportError(error.message);
+          });
+          return;
+        }
+
+        Promise.all([refreshProfiles(), refreshSocial()])
+          .then(refreshSuggestedProfiles)
+          .catch(function (error) {
+            reportError(error.message);
+          });
       });
-    });
+    }
 
     byId('copy-private').addEventListener('click', function () {
       copyText(state.identity.privateKey)
@@ -4000,16 +5368,40 @@
     });
   }
 
+  async function reconnectRelays() {
+    if (!state.ready) return;
+    setNet('warn', 'conectando');
+    try {
+      await onpostt.connect(relayConnectOptions());
+      await refreshAll();
+      setNet(onpostt.isConnected ? 'ok' : 'warn', onpostt.isConnected ? 'online' : 'offline');
+      window.dispatchEvent(new CustomEvent('onpostt:relays-reconnected'));
+      toast('Relays atualizados.');
+    } catch (error) {
+      setNet('warn', 'offline');
+      reportError(error.message);
+    }
+  }
+
   function bindLibraryEvents() {
-    onpostt.on('open', function () {
+    onpostt.on('open', function (event) {
+      if (RELAY && typeof RELAY.setHostStatus === 'function' && event && event.url) {
+        RELAY.setHostStatus(event.url, true);
+      }
       setNet('ok', 'online');
     });
 
-    onpostt.on('close', function () {
+    onpostt.on('close', function (event) {
+      if (RELAY && typeof RELAY.setHostStatus === 'function' && event && event.url) {
+        RELAY.setHostStatus(event.url, false);
+      }
       if (!onpostt.isConnected) setNet('warn', 'offline');
     });
 
     onpostt.on('reconnect', function (event) {
+      if (RELAY && typeof RELAY.setHostStatus === 'function' && event && event.url) {
+        RELAY.setHostStatus(event.url, false);
+      }
       setNet('warn', 'reconectando em ' + Math.round(event.delay / 1000) + 's');
     });
 
@@ -4020,6 +5412,11 @@
     onpostt.on('error', function (event) {
       var message = event && (event.message || (event.error && event.error.message));
       if (message) reportError(message);
+    });
+
+    // A lista de relays mudou (interface): reconecta com os hosts atualizados.
+    window.addEventListener('onpostt:relays-changed', function () {
+      reconnectRelays();
     });
   }
 
@@ -4048,10 +5445,35 @@
     var notice = window.onposttAuth.consumeNotice();
     if (notice) toast(notice);
 
+    var params = new URLSearchParams(window.location.search);
+
+    // Links antigos para /?view=chat passam a abrir a página dedicada.
+    if (!MESSAGES_PAGE && params.get('view') === 'chat') {
+      var entryPeer = params.get('peer');
+      window.location.replace(
+        '/messages.html' + (entryPeer ? '?peer=' + encodeURIComponent(entryPeer) : '')
+      );
+      return;
+    }
+
     loadHiddenChats();
     updateIdentityUi();
     bindEvents();
     bindLibraryEvents();
+
+    // Esconde o feed/composer antes de qualquer chamada de rede. Sem isso,
+    // abrir /?view=profiles (por exemplo, pelo menu de outro perfil) mostra o
+    // composer por um instante antes de trocar para a busca.
+    if (!MESSAGES_PAGE && !POST_PAGE) {
+      var earlyView = params.get('view');
+      if (
+        ['feed', 'profiles', 'profile-edit', 'settings', 'notifications', 'about'].includes(
+          earlyView
+        )
+      ) {
+        switchView(earlyView, { skipRender: true });
+      }
+    }
 
     try {
       await onpostt.setReaderKey(state.identity.privateKey);
@@ -4060,35 +5482,48 @@
     }
 
     setNet('warn', 'conectando');
+    if (RELAY && typeof RELAY.probe === 'function') {
+      try {
+        await RELAY.probe();
+      } catch (error) {
+        /* segue com a lista configurada */
+      }
+    }
     try {
-      await onpostt.connect({
-        host: [ORIGIN],
-        socket: [WS_URL],
-      });
+      await onpostt.connect(relayConnectOptions());
     } catch (error) {
       reportError(error.message);
     }
 
     await refreshAll();
-    subscribeLive();
+    if (!MESSAGES_PAGE) subscribeLive();
     subscribeInbox();
     state.ready = true;
 
-    var params = new URLSearchParams(window.location.search);
-    var requestedView = params.get('view');
-    if (['feed', 'profiles', 'notifications', 'chat', 'about'].includes(requestedView)) {
-      switchView(requestedView);
+    if (POST_PAGE) {
+      var requestedPost = params.get('post');
+      var requestedRepost = params.get('repost');
+      await openPostDetailPage(requestedPost || '', requestedRepost || '');
+    } else {
+      var requestedView = MESSAGES_PAGE ? 'chat' : params.get('view');
+      if (
+        ['feed', 'profiles', 'profile-edit', 'settings', 'notifications', 'chat', 'about'].includes(
+          requestedView
+        )
+      ) {
+        switchView(requestedView);
+      }
     }
 
-    // Permite abrir uma conversa direto, por exemplo /?view=chat&peer=<pubkey>.
+    // Permite abrir uma conversa direto, por exemplo /messages.html?peer=<pubkey>.
     var requestedPeer = params.get('peer');
-    if (requestedPeer && onpostt.isValidPublicKey(requestedPeer)) {
+    if (!POST_PAGE && requestedPeer && onpostt.isValidPublicKey(requestedPeer)) {
       openChat(requestedPeer).catch(function (error) {
         reportError(error.message);
       });
     }
 
-    var requestedTopic = normalizeTopic(params.get('topic'));
+    var requestedTopic = MESSAGES_PAGE || POST_PAGE ? '' : normalizeTopic(params.get('topic'));
     if (requestedTopic) openTopic(requestedTopic);
 
     // O username local vira um bloco `profile` inicial se a pubkey ainda não
@@ -4096,6 +5531,9 @@
     ensureOwnProfileBlock().catch(function () {
       /* o perfil público inicial é opcional; o formulário continua utilizável */
     });
+
+    document.body.classList.add('app-ready');
+    window.dispatchEvent(new CustomEvent('onpostt:app-ready'));
   }
 
   init();

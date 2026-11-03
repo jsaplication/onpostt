@@ -26,7 +26,7 @@
   <!-- Idioma e tema -->
   <meta http-equiv="content-language" content="pt-BR">
   <meta name="color-scheme" content="dark">
-  <meta name="theme-color" content="#0b0b0f">
+  <meta name="theme-color" content="#1e1928">
 
   <!-- URL canônica -->
   <link rel="canonical" href="https://onpostt.com/">
@@ -96,13 +96,34 @@
       <nav class="site-nav demo-nav" aria-label="Seções do demo">
         <button type="button" class="nav-button active" data-view="feed">Inicio</button>
         <button type="button" class="nav-button" data-view="notifications">Notificações <span class="nav-badge" id="notification-badge" aria-live="polite" hidden>0</span></button>
-        <button type="button" class="nav-button" data-view="profiles">Perfis</button>
+        <button type="button" class="nav-button" data-view="profiles">Buscar</button>
         <button type="button" class="nav-button" data-view="chat">Conversas <span class="nav-badge" id="message-badge" aria-live="polite" hidden>0</span></button>
         <button type="button" class="nav-button" data-view="about">Sobre</button>
       </nav>
       <div class="demo-identity">
         <span class="pill" id="net-status"><span class="status-dot" aria-hidden="true"></span><span id="net-label">conectando</span></span>
-        <button type="button" class="btn btn-small btn-ghost mono" id="identity-button" title="Ver chave da sessão">—</button>
+        <div class="profile-menu" id="profile-menu">
+          <button type="button" class="profile-menu-button" id="identity-button" aria-haspopup="menu" aria-controls="profile-dropdown" aria-expanded="false" title="Abrir menu do perfil">
+            <span class="profile-menu-avatar" id="nav-avatar" aria-hidden="true">?</span>
+            <span class="profile-menu-name" id="nav-profile-name">Perfil</span>
+            <span class="profile-menu-caret" aria-hidden="true">▾</span>
+          </button>
+          <div class="profile-dropdown" id="profile-dropdown" role="menu" hidden>
+            <div class="profile-dropdown-head">
+              <span class="profile-menu-avatar profile-menu-avatar-lg" id="nav-avatar-menu" aria-hidden="true">?</span>
+              <div class="profile-dropdown-id">
+                <strong id="nav-profile-name-menu">Perfil</strong>
+                <span class="mono" id="nav-profile-handle">@…</span>
+              </div>
+            </div>
+            <a class="profile-dropdown-item" role="menuitem" id="menu-profile" href="/perfil.html">Perfil</a>
+            <a class="profile-dropdown-item" role="menuitem" id="menu-edit" href="/?view=profile-edit">Editar perfil</a>
+            <a class="profile-dropdown-item" role="menuitem" id="menu-settings" href="/?view=settings">Configurações</a>
+            <button type="button" class="profile-dropdown-item" role="menuitem" id="menu-keys">Chaves</button>
+            <div class="profile-dropdown-sep" aria-hidden="true"></div>
+            <button type="button" class="profile-dropdown-item danger" role="menuitem" id="menu-logout">Sair</button>
+          </div>
+        </div>
       </div>
     </div>
   </header>
@@ -124,20 +145,18 @@
           <form class="card compose" id="compose-form" autocomplete="off">
             <label class="field">
               <span>Novo post</span>
-              <textarea class="textarea" id="post-content" maxlength="4000" placeholder="O que está acontecendo no protocolo? Você também pode anexar uma foto e adicionar tópicos."></textarea>
+              <textarea class="textarea" id="post-content" maxlength="4000" placeholder="O que está acontecendo? Use #tópicos no texto e cole um link para gerar uma prévia."></textarea>
             </label>
-            <div class="compose-topics">
-              <label class="field">
-                <span>Tópicos</span>
-                <input class="input" id="post-topic-input" maxlength="50" placeholder="onpostt" autocomplete="off" spellcheck="false">
-              </label>
-              <button type="button" class="btn btn-small" id="add-post-topic">Adicionar</button>
-            </div>
             <div class="topic-chips compose-topic-chips" id="compose-topic-chips" hidden></div>
-            <p class="faint small compose-topic-hint">Até 5 tópicos por post. Um tópico novo é criado quando você publica com ele.</p>
+            <p class="faint small compose-topic-hint" id="compose-topic-hint">Digite #tópicos no texto. Até 5 são publicados automaticamente.</p>
+            <div class="link-previews compose-link-previews" id="compose-link-previews" hidden></div>
             <div class="compose-media">
-              <label class="btn btn-small file-button">
-                Adicionar foto
+              <label class="compose-photo-button" title="Adicionar foto">
+                <span class="sr-only">Adicionar foto</span>
+                <svg viewBox="0 0 24 24" aria-hidden="true" focusable="false">
+                  <path d="M4 8.5h3.2l1.5-2.1h6.6l1.5 2.1H20a2 2 0 0 1 2 2V18a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2v-7.5a2 2 0 0 1 2-2Z" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linejoin="round"/>
+                  <circle cx="12" cy="13.4" r="3.2" fill="none" stroke="currentColor" stroke-width="1.7"/>
+                </svg>
                 <input type="file" id="post-image" accept="image/jpeg,image/png" hidden>
               </label>
               <span class="faint small" id="image-hint">JPEG ou PNG, redimensionada no navegador para até 500px.</span>
@@ -165,6 +184,9 @@
           </div>
 
           <div class="feed" id="feed-list" aria-live="polite"></div>
+          <div class="load-more-row">
+            <button type="button" class="btn btn-small" id="load-more-posts" hidden>Carregar mais posts</button>
+          </div>
           <div class="empty-state" id="feed-empty" hidden>
             <p id="feed-empty-title">Nenhum post ainda.</p>
             <p class="muted small" id="feed-empty-note">Publique o primeiro bloco para ver o protocolo em ação.</p>
@@ -215,13 +237,44 @@
     <section class="demo-view" id="view-profiles" aria-labelledby="profiles-title" hidden>
       <div class="demo-head">
         <div>
-          <h1 id="profiles-title">Perfis</h1>
+          <h1 id="profiles-title">Buscar usuários</h1>
+          <p class="faint small mb-0">Encontre pessoas pelo nome ou pela pubkey.</p>
         </div>
         <button type="button" class="btn btn-small" id="refresh-profiles">Atualizar</button>
       </div>
 
-      <form class="card" id="profile-form" autocomplete="off">
-        <h2 class="h3">Seu perfil</h2>
+      <section class="card profile-search" aria-labelledby="profiles-search-title">
+        <label class="field">
+          <span id="profiles-search-title">Buscar usuário</span>
+          <input class="input" id="profiles-search" type="search" placeholder="Nome ou pubkey" autocomplete="off" spellcheck="false">
+        </label>
+        <p class="faint small mb-0">A busca compara o nome do perfil e a pubkey, sem diferenciar maiúsculas de minúsculas.</p>
+      </section>
+
+      <p class="faint small profiles-context" id="profiles-context">
+        Perfis sugeridos a partir de quem você segue, seus seguidores e autores do feed.
+      </p>
+
+      <div class="profile-grid" id="profiles-list" aria-live="polite"></div>
+      <div class="load-more-row">
+        <button type="button" class="btn btn-small" id="load-more-profiles" hidden>Carregar mais perfis</button>
+      </div>
+      <div class="empty-state" id="profiles-empty" hidden>
+        <p>Nenhum perfil encontrado.</p>
+        <p class="muted small">Tente outro nome ou uma pubkey completa.</p>
+      </div>
+    </section>
+
+    <section class="demo-view" id="view-profile-edit" aria-labelledby="profile-edit-title" hidden>
+      <div class="demo-head">
+        <div>
+          <h1 id="profile-edit-title">Editar perfil</h1>
+          <p class="faint small mb-0">Atualize sua foto, seu nome e sua bio.</p>
+        </div>
+        <a class="btn btn-small btn-ghost" href="/perfil.html">Ver meu perfil</a>
+      </div>
+
+      <form class="card profile-edit-card" id="profile-form" autocomplete="off">
         <div class="profile-photo-editor">
           <div class="avatar avatar-large" id="profile-photo-preview" aria-label="Foto do perfil"></div>
           <div class="profile-photo-actions">
@@ -251,74 +304,137 @@
           <span class="faint small">Publicado como bloco assinado.</span>
         </div>
       </form>
-
-      <section class="card profile-search" aria-labelledby="profiles-search-title">
-        <label class="field">
-          <span id="profiles-search-title">Buscar usuário</span>
-          <input class="input" id="profiles-search" type="search" placeholder="Nome ou pubkey" autocomplete="off" spellcheck="false">
-        </label>
-        <p class="faint small mb-0">A busca compara o nome do perfil e a pubkey, sem diferenciar maiúsculas de minúsculas.</p>
-      </section>
-
-      <div class="profile-grid" id="profiles-list" aria-live="polite"></div>
-      <div class="empty-state" id="profiles-empty" hidden>
-        <p>Nenhum perfil encontrado.</p>
-        <p class="muted small">Salve o seu perfil e ele aparecerá aqui.</p>
-      </div>
     </section>
 
-    <section class="demo-view" id="view-chat" aria-labelledby="chat-title" hidden>
+    <section class="demo-view" id="view-settings" aria-labelledby="settings-title" hidden>
       <div class="demo-head">
         <div>
-          <h1 id="chat-title">Conversas</h1>
-          <p class="muted">Mensagens cifradas de ponta a ponta. Abrir uma conversa registra a leitura no relay.</p>
+          <h1 id="settings-title">Configurações</h1>
+          <p class="faint small mb-0">Conta, chaves, relays e sessão em um só lugar.</p>
         </div>
       </div>
 
-      <div class="chat-layout">
-        <aside class="card chat-contacts">
-          <h2 class="h3">Abrir conversa</h2>
-          <form class="chat-open" id="open-chat-form" autocomplete="off">
-            <label class="field">
-              <span>Pubkey do contato</span>
-              <input class="input mono" id="peer-input" placeholder="03… ou 04…" spellcheck="false">
+      <div class="settings-grid">
+        <section class="card settings-card" aria-labelledby="settings-account-title">
+          <div class="settings-account">
+            <div class="avatar avatar-large" id="settings-avatar" aria-hidden="true"></div>
+            <div class="settings-account-id">
+              <h2 class="h3" id="settings-account-title">Conta</h2>
+              <strong id="settings-name">—</strong>
+              <span class="mono small" id="settings-pubkey"></span>
+            </div>
+          </div>
+          <p class="faint small mb-0">Sua identidade é local. O relay não guarda senha nem chave privada.</p>
+          <div class="form-actions">
+            <a class="btn btn-small btn-primary" id="settings-profile-link" href="/perfil.html">Ver perfil</a>
+            <a class="btn btn-small" id="settings-edit-link" href="/?view=profile-edit">Editar perfil</a>
+          </div>
+        </section>
+
+        <section class="card settings-card" aria-labelledby="settings-keys-title">
+          <h2 class="h3" id="settings-keys-title">Chaves e segurança</h2>
+          <p class="faint small">Veja sua chave pública, exporte o cofre cifrado e confira a chave privada da sessão.</p>
+          <div class="form-actions">
+            <button type="button" class="btn btn-small" id="settings-keys">Ver chave e cofre</button>
+          </div>
+        </section>
+
+        <section class="card settings-card" aria-labelledby="settings-relays-title">
+          <h2 class="h3" id="settings-relays-title">Relays</h2>
+          <p class="faint small">Gerencie os relays usados para publicar, ler e receber interações.</p>
+          <div class="form-actions">
+            <button type="button" class="btn btn-small" data-open-relays>Gerenciar relays</button>
+          </div>
+        </section>
+
+        <section class="card settings-card" aria-labelledby="settings-session-title">
+          <h2 class="h3" id="settings-session-title">Sessão</h2>
+          <p class="faint small">Encerre a sessão neste dispositivo. Baixe o cofre antes de sair.</p>
+          <div class="form-actions">
+            <button type="button" class="btn btn-small btn-danger" id="settings-logout">Sair</button>
+          </div>
+        </section>
+      </div>
+    </section>
+
+    <section class="demo-view direct-view" id="view-chat" aria-labelledby="chat-title" hidden>
+      <div class="direct-layout" id="direct-layout">
+        <aside class="direct-sidebar" aria-label="Lista de conversas">
+          <div class="direct-sidebar-head">
+            <div>
+              <h1 id="chat-title">Conversas</h1>
+              <p class="faint small mb-0">Mensagens cifradas de ponta a ponta</p>
+            </div>
+            <button type="button" class="direct-icon-btn" id="toggle-new-chat" aria-label="Nova conversa" aria-expanded="false" title="Nova conversa">✎</button>
+          </div>
+
+          <form class="direct-new-form" id="open-chat-form" autocomplete="off" hidden>
+            <label class="direct-new-field">
+              <span class="sr-only">Pubkey do contato</span>
+              <input class="input mono" id="peer-input" placeholder="Pubkey do contato (03… ou 04…)" spellcheck="false">
             </label>
             <button type="submit" class="btn btn-primary btn-small">Abrir</button>
           </form>
-          <div class="divider"></div>
-          <h3 class="contact-title">Suas conversas</h3>
-          <p class="faint small">Somente conversas enviadas ou recebidas por você. O número indica mensagens não lidas.</p>
-          <div class="contact-list" id="contact-list"></div>
+
+          <label class="direct-search">
+            <span class="sr-only">Buscar conversa</span>
+            <input class="input" id="contact-search" type="search" placeholder="Buscar" autocomplete="off" spellcheck="false">
+          </label>
+
+          <p class="direct-sidebar-note faint small">Somente conversas enviadas ou recebidas por você.</p>
+          <div class="contact-list" id="contact-list" aria-live="polite"></div>
         </aside>
 
-        <section class="card chat-panel">
-          <div class="chat-head">
-            <div>
+        <section class="direct-thread" aria-label="Conversa selecionada">
+          <header class="chat-head direct-thread-head">
+            <button type="button" class="direct-back" id="chat-back" aria-label="Voltar para a lista de conversas">‹</button>
+            <div class="direct-peer-avatar" id="chat-peer-avatar" aria-hidden="true" hidden></div>
+            <div class="direct-peer-meta">
               <strong id="chat-peer-label">Nenhuma conversa</strong>
               <p class="faint small mono truncate mb-0" id="chat-peer-key">Escolha um contato ao lado</p>
             </div>
-            <div class="chat-head-actions">
+            <div class="chat-head-actions direct-head-actions">
               <button type="button" class="btn btn-small btn-ghost" id="refresh-chat" disabled>Atualizar</button>
-              <button type="button" class="btn btn-small btn-ghost" id="delete-chat" disabled>Apagar conversa</button>
+              <button type="button" class="btn btn-small btn-ghost" id="delete-chat" disabled>Apagar</button>
             </div>
-          </div>
-          <div class="chat-messages" id="chat-messages" aria-live="polite">
+          </header>
+
+          <div class="chat-messages direct-messages" id="chat-messages" aria-live="polite">
             <p class="empty-state-inline">Abra uma conversa para começar.</p>
           </div>
-          <form class="chat-form" id="chat-form" autocomplete="off">
-            <div class="chat-compose">
-              <input class="input" id="chat-input" placeholder="Escreva uma mensagem cifrada…" maxlength="4000" disabled>
-              <button type="submit" class="btn btn-primary" id="chat-send" disabled>Enviar</button>
-            </div>
-            <div class="chat-tools">
-              <label class="btn btn-small btn-ghost chat-file-label" for="chat-image">Imagem</label>
+
+          <form class="chat-form direct-composer" id="chat-form" autocomplete="off">
+            <div class="chat-compose direct-compose">
               <input id="chat-image" type="file" accept="image/jpeg,image/png" disabled hidden>
-              <button type="button" class="btn btn-small btn-ghost" id="chat-audio" disabled>Gravar áudio</button>
+              <label class="direct-tool" for="chat-image" title="Enviar imagem">
+                <span aria-hidden="true">📷</span>
+                <span class="sr-only">Enviar imagem</span>
+              </label>
+              <button type="button" class="direct-tool" id="chat-audio" disabled title="Gravar áudio">
+                <span aria-hidden="true">🎙️</span>
+                <span class="sr-only" id="chat-audio-label">Gravar áudio</span>
+              </button>
+              <label class="sr-only" for="chat-input">Mensagem</label>
+              <input class="input" id="chat-input" placeholder="Escreva uma mensagem…" maxlength="4000" disabled>
+              <button type="submit" class="btn btn-primary direct-send" id="chat-send" disabled>Enviar</button>
+            </div>
+            <div class="chat-tools direct-tools">
               <span class="faint small chat-media-hint" id="chat-media-hint">Imagem até 500px · áudio até 15s.</span>
             </div>
           </form>
         </section>
       </div>
+    </section>
+
+    <section class="demo-view post-detail-view" id="view-post" aria-labelledby="post-detail-title" hidden>
+      <div class="post-detail-head">
+        <button type="button" class="btn btn-small btn-ghost" id="post-back">‹ Voltar</button>
+        <div>
+          <h1 id="post-detail-title">Publicação</h1>
+          <p class="faint small mb-0">Curtidas, comentários e reposts deste bloco.</p>
+        </div>
+      </div>
+      <div class="post-detail" id="post-detail" aria-live="polite"></div>
     </section>
 
     <section class="demo-view" id="view-about" aria-labelledby="about-title" hidden>
@@ -337,24 +453,25 @@
             <li><strong>Feed:</strong> blocos <code>post</code> assinados, reposts com atribuição e abas Global/Seguindo.</li>
             <li><strong>Tópicos:</strong> metadados opcionais no <code>post</code>, filtráveis e ranqueados por <code>GET /api/trending</code>. Tópicos são criados pelo primeiro post que os usa.</li>
             <li><strong>Perfis:</strong> blocos <code>profile</code>; o relay retorna o mais recente por pubkey.</li>
-            <li><strong>Curtidas/reações/reposts:</strong> blocos <code>like</code>, <code>reaction</code> e <code>repost</code> com toggle por autor e alvo.</li>
+            <li><strong>Curtidas/reposts:</strong> blocos <code>like</code> e <code>repost</code> com toggle por autor e alvo. Os comentários mantêm as reações 👍/👎.</li>
             <li><strong>Comentários/respostas:</strong> blocos <code>comment</code> com <code>parent</code> opcional para responder.</li>
             <li><strong>Notificações:</strong> blocos <code>notification</code> apontam para a interação assinada e para o bloco do destinatário.</li>
             <li><strong>Leitura:</strong> blocos <code>notification_read</code> e <code>message_read</code> registram, pela pubkey, o que já foi lido.</li>
-            <li><strong>Conversas:</strong> <code>message</code> via WebSocket, ECDH efêmero + AES-256-GCM, com imagem redimensionada e áudio de até 15s no envelope cifrado.</li>
+            <li><strong>Conversas:</strong> página dedicada em <a href="/messages.html">messages.html</a>, com <code>message</code> via WebSocket, ECDH efêmero + AES-256-GCM, imagem redimensionada e áudio de até 15s no envelope cifrado.</li>
           </ul>
         </div>
         <div class="card">
           <h2 class="h3">Limites conscientes</h2>
           <ul class="about-list">
             <li>Metadados de conversa (quem, quando) são visíveis ao relay.</li>
-            <li>Não há descoberta global: os contatos vêm dos perfis deste relay.</li>
-            <li>O demo usa a mesma origem do relay; para outro host, ajuste <code>ORIGIN</code> e <code>WS_URL</code> em <code>app.js</code>.</li>
+            <li>Não há descoberta global: os contatos vêm dos perfis dos relays configurados.</li>
+            <li>Os relays padrão ficam em <code>js/relay.js</code>; você também pode adicionar ou remover relays pelo botão <em>Gerenciar relays</em>. A lista fica salva neste navegador e as consultas são mescladas entre os relays conectados.</li>
             <li>A chave fica em <code>sessionStorage</code> e a sessão persistente usa uma chave AES não exportável no IndexedDB, com validade de 30 dias.</li>
             <li>O cofre exportado é cifrado com PBKDF2-SHA-256 e AES-256-GCM; a senha não é armazenada.</li>
           </ul>
           <div class="form-actions mt-2">
             <button type="button" class="btn btn-small" id="about-identity">Ver chave e cofre</button>
+            <button type="button" class="btn btn-small btn-ghost" data-open-relays>Gerenciar relays</button>
             <a class="btn btn-small btn-ghost" href="/doc.html">Ler a documentação</a>
           </div>
         </div>
@@ -404,6 +521,8 @@
 
   <div class="toast-stack" id="toast-stack" aria-live="polite" aria-atomic="false"></div>
 
+  <script src="js/relay.js" defer></script>
+  <script src="js/relays-ui.js" defer></script>
   <script src="js/onpostt.min.js" defer></script>
   <script src="js/auth.js" defer></script>
   <script src="js/app.js" defer></script>

@@ -77,7 +77,7 @@
   gap: 0.35rem;
   flex-wrap: wrap;
   border: 1px solid var(--border);
-  background: #0a1219;
+  background: #221d2e;
   border-radius: 11px;
   padding: 0.25rem;
   margin-bottom: 1.15rem;
@@ -102,7 +102,7 @@
 }
 
 .auth-tab.active {
-  color: #04120c;
+  color: #1a1228;
   background: linear-gradient(135deg, var(--accent), #67f0be);
 }
 
@@ -128,16 +128,16 @@
 }
 
 .auth-alert {
-  border: 1px solid rgba(255, 107, 107, 0.35);
+  border: 1px solid rgba(255, 123, 143, 0.35);
   border-left: 3px solid var(--danger);
-  background: rgba(255, 107, 107, 0.08);
+  background: rgba(255, 123, 143, 0.08);
   color: #ffd1d1;
 }
 
 .auth-notice {
-  border: 1px solid rgba(52, 224, 161, 0.28);
+  border: 1px solid rgba(181, 140, 255, 0.28);
   border-left: 3px solid var(--accent);
-  background: rgba(52, 224, 161, 0.07);
+  background: rgba(181, 140, 255, 0.07);
   color: #c7ffe8;
 }
 

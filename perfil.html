@@ -21,7 +21,7 @@
   <!-- Idioma e tema -->
   <meta http-equiv="content-language" content="pt-BR">
   <meta name="color-scheme" content="dark">
-  <meta name="theme-color" content="#0b0b0f">
+  <meta name="theme-color" content="#1e1928">
 
   <!-- URL canônica -->
   <!-- Atualize dinamicamente para a URL do perfil -->
@@ -86,15 +86,35 @@
       </a>
       <nav class="site-nav demo-nav" aria-label="Seções do demo">
         <button type="button" class="nav-button" data-view="feed">Inicio</button>
-        <button type="button" class="nav-button active" data-view="profile">Perfil</button>
         <button type="button" class="nav-button" data-view="notifications">Notificações <span class="nav-badge" id="notification-badge" aria-live="polite" hidden>0</span></button>
-        <button type="button" class="nav-button" data-view="profiles">Perfis</button>
+        <button type="button" class="nav-button" data-view="profiles">Buscar</button>
         <button type="button" class="nav-button" data-view="chat">Conversas <span class="nav-badge" id="message-badge" aria-live="polite" hidden>0</span></button>
         <button type="button" class="nav-button" data-view="about">Sobre</button>
       </nav>
       <div class="demo-identity">
         <span class="pill" id="net-status"><span class="status-dot" aria-hidden="true"></span><span id="net-label">conectando</span></span>
-        <button type="button" class="btn btn-small btn-ghost mono" id="identity-button" title="Ver chave da sessão">—</button>
+        <div class="profile-menu" id="profile-menu">
+          <button type="button" class="profile-menu-button active" id="identity-button" aria-haspopup="menu" aria-controls="profile-dropdown" aria-expanded="false" title="Abrir menu do perfil">
+            <span class="profile-menu-avatar" id="nav-avatar" aria-hidden="true">?</span>
+            <span class="profile-menu-name" id="nav-profile-name">Perfil</span>
+            <span class="profile-menu-caret" aria-hidden="true">▾</span>
+          </button>
+          <div class="profile-dropdown" id="profile-dropdown" role="menu" hidden>
+            <div class="profile-dropdown-head">
+              <span class="profile-menu-avatar profile-menu-avatar-lg" id="nav-avatar-menu" aria-hidden="true">?</span>
+              <div class="profile-dropdown-id">
+                <strong id="nav-profile-name-menu">Perfil</strong>
+                <span class="mono" id="nav-profile-handle">@…</span>
+              </div>
+            </div>
+            <a class="profile-dropdown-item" role="menuitem" id="menu-profile" href="/perfil.html">Perfil</a>
+            <a class="profile-dropdown-item" role="menuitem" id="menu-edit" href="/?view=profile-edit">Editar perfil</a>
+            <a class="profile-dropdown-item" role="menuitem" id="menu-settings" href="/?view=settings">Configurações</a>
+            <button type="button" class="profile-dropdown-item" role="menuitem" id="menu-keys">Chaves</button>
+            <div class="profile-dropdown-sep" aria-hidden="true"></div>
+            <button type="button" class="profile-dropdown-item danger" role="menuitem" id="menu-logout">Sair</button>
+          </div>
+        </div>
       </div>
     </div>
   </header>
@@ -142,7 +162,7 @@
             <button type="button" class="btn btn-small btn-primary" id="profile-follow" aria-pressed="false" hidden>Seguir</button>
             <button type="button" class="btn btn-small btn-primary" id="profile-chat" hidden>Conversar</button>
             <button type="button" class="btn btn-small btn-ghost" id="profile-block" hidden>Bloquear</button>
-            <a class="btn btn-small btn-ghost" id="profile-edit-link" href="/?view=profiles" hidden>Editar perfil</a>
+            <a class="btn btn-small btn-primary" id="profile-edit-link" href="/?view=profile-edit" hidden>Editar perfil</a>
           </div>
           <p class="profile-action-note" id="profile-action-note" hidden></p>
         </div>
@@ -176,6 +196,8 @@
   <!-- O app completo do index.html é montado aqui quando há uma sessão ativa. -->
   <div id="app-shell"></div>
 
+  <script src="js/relay.js" defer></script>
+  <script src="js/relays-ui.js" defer></script>
   <script src="js/onpostt.min.js" defer></script>
   <script src="js/auth.js" defer></script>
   <script>
@@ -187,7 +209,7 @@
      * e somente leitura.
      */
     (function () {
-      var APP_VIEWS = ['feed', 'profiles', 'notifications', 'chat', 'about'];
+      var APP_VIEWS = ['feed', 'profiles', 'profile-edit', 'settings', 'notifications', 'chat', 'about'];
 
       function byId(id) {
         return document.getElementById(id);

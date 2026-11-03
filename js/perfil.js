@@ -2,7 +2,13 @@
 
 (function () {
   var APP = 'onpostt-demo';
-  var ORIGIN = 'http://localhost:3000';
+  var RELAY =
+    window.onposttRelay && Array.isArray(window.onposttRelay.hosts)
+      ? window.onposttRelay
+      : {
+          hosts: ['http://localhost:3000'],
+          sockets: ['ws://localhost:3000'],
+        };
   var IDENTITY_KEY = 'onpostt.demo.identity';
   var MAX_POSTS = 100;
   var MAX_REPOSTS = 100;
@@ -11,7 +17,6 @@
   var MAX_SOCIAL = 1000;
   var MAX_PROFILES = 500;
   var MAX_IMAGE_DIMENSION = 500;
-  var REACTIONS = ['❤️', '😂', '🔥', '👏', '😮'];
   var COMMENT_LIKE = '👍';
   var COMMENT_DISLIKE = '👎';
   var COMMENT_REACTIONS = [COMMENT_LIKE, COMMENT_DISLIKE];
@@ -285,6 +290,14 @@
     return '/perfil.html?pubkey=' + encodeURIComponent(pubkey);
   }
 
+  function postDetailUrl(postId, repostId) {
+    var params = new URLSearchParams();
+    if (postId) params.set('post', postId);
+    if (repostId) params.set('repost', repostId);
+    var query = params.toString();
+    return '/post.html' + (query ? '?' + query : '');
+  }
+
   function showMessage(text) {
     var message = byId('profile-message');
     if (!message) return;
@@ -338,7 +351,11 @@
     var signed = await window.onpostt.signBlock(partial, state.identity.privateKey);
     if (typeof signed === 'string') throw new Error(signed);
 
-    var responses = await window.onpostt.sendBlock(signed);
+    // relay.js roteia interações apenas para relays que possuem o bloco alvo.
+    var responses =
+      RELAY && typeof RELAY.sendBlock === 'function'
+        ? await RELAY.sendBlock(signed)
+        : await window.onpostt.sendBlock(signed);
     var success = responses.filter(function (response) {
       return response && response.status === 'success';
     });
@@ -366,6 +383,11 @@
 
     var repostPost = state.repostPosts.get(id);
     if (repostPost) return repostPost;
+
+    var repost = state.repostBlocks.find(function (candidate) {
+      return candidate && candidate.id === id;
+    });
+    if (repost) return repost;
 
     var found = null;
     state.comments.forEach(function (comments) {
@@ -486,36 +508,6 @@
       row.appendChild(link);
     });
     article.appendChild(row);
-  }
-
-  function renderReactionBar(post) {
-    var reactions = state.reactions.get(post.id) || new Map();
-    var bar = el('div', 'reaction-bar');
-    bar.setAttribute('aria-label', 'Reações');
-
-    REACTIONS.forEach(function (emoji) {
-      var count = reactions.get(emoji) || 0;
-      var key = post.id + REACTION_SEP + emoji;
-      var active = state.myReactions.has(key);
-      var pending = state.reactionPending.has(key);
-      var button = el(
-        'button',
-        'reaction-button' + (active ? ' active' : ''),
-        emoji + (count ? ' ' + count : '')
-      );
-      button.type = 'button';
-      button.disabled = pending;
-      button.dataset.action = 'reaction';
-      button.dataset.block = post.id;
-      button.dataset.emoji = emoji;
-      button.setAttribute(
-        'aria-label',
-        (active ? 'Remover reação ' : 'Reagir com ') + emoji + (count ? ' (' + count + ')' : '')
-      );
-      bar.appendChild(button);
-    });
-
-    return bar;
   }
 
   function commentReactionPending(commentId) {
@@ -710,8 +702,10 @@
   }
 
   function renderPost(post, repost) {
+    var social = repost || post;
     var article = el('article', 'card profile-post' + (repost ? ' profile-repost' : ''));
     article.dataset.block = post.id;
+    article.dataset.social = social.id;
     if (repost) article.dataset.repost = repost.id;
 
     if (repost) {
@@ -743,31 +737,27 @@
       article.appendChild(banner);
     }
 
-    var head = el('div', 'profile-post-head');
-    head.appendChild(el('span', 'profile-post-date', formatTime(post.created_at)));
-    head.appendChild(el('span', 'block-id', 'id ' + String(post.id || '').slice(0, 12)));
+    var authorData = profileData(profileOf(post.pubkey));
+    var authorName = authorData.name || shortKey(post.pubkey);
+    var head = el('div', 'post-head');
+    var postAuthorLink = el('a', 'post-author-link');
+    postAuthorLink.href = profileUrl(post.pubkey);
+    postAuthorLink.setAttribute('aria-label', 'Abrir perfil de ' + authorName);
+    postAuthorLink.appendChild(avatarNode(authorData.name, post.pubkey, authorData.image));
+    var author = el('div', 'post-author');
+    author.appendChild(el('strong', '', authorName));
+    author.appendChild(el('small', '', shortKey(post.pubkey)));
+    postAuthorLink.appendChild(author);
+    head.appendChild(postAuthorLink);
+    head.appendChild(el('span', 'post-time', formatRelative(post.created_at)));
     article.appendChild(head);
-
-    if (repost) {
-      var originalData = profileData(profileOf(post.pubkey));
-      var origin = el('div', 'profile-repost-origin');
-      origin.appendChild(avatarNode(originalData.name, post.pubkey, originalData.image));
-      var originText = el('span', 'profile-repost-origin-text');
-      originText.appendChild(document.createTextNode('Publicação original de '));
-      var authorLink = el('a', 'profile-repost-author', displayName(post.pubkey));
-      authorLink.href = profileUrl(post.pubkey);
-      originText.appendChild(authorLink);
-      origin.appendChild(originText);
-      article.appendChild(origin);
-    }
 
     renderPostContent(article, post);
     renderPostTopics(article, post);
-    article.appendChild(renderReactionBar(post));
 
-    var liked = state.likedByMe.has(post.id);
-    var likeCount = state.likes.get(post.id) || 0;
-    var comments = state.comments.get(post.id) || [];
+    var liked = state.likedByMe.has(social.id);
+    var likeCount = state.likes.get(social.id) || 0;
+    var comments = state.comments.get(social.id) || [];
     var reposted = state.repostedByMe.has(post.id);
     var repostCount = state.reposts.get(post.id) || 0;
 
@@ -780,7 +770,7 @@
     );
     likeButton.type = 'button';
     likeButton.dataset.action = 'like';
-    likeButton.dataset.block = post.id;
+    likeButton.dataset.block = social.id;
     actions.appendChild(likeButton);
 
     var repostButton = el(
@@ -801,10 +791,10 @@
     );
     commentButton.type = 'button';
     commentButton.dataset.action = 'comment';
-    commentButton.dataset.block = post.id;
+    commentButton.dataset.block = social.id;
     actions.appendChild(commentButton);
 
-    if (state.identity && state.identity.publicKey === post.pubkey && canWrite()) {
+    if (!repost && state.identity && state.identity.publicKey === post.pubkey && canWrite()) {
       var deleteButton = el('button', 'action-button', 'Excluir');
       deleteButton.type = 'button';
       deleteButton.dataset.action = 'delete';
@@ -814,8 +804,8 @@
 
     article.appendChild(actions);
 
-    if (state.openComments.has(post.id)) {
-      article.appendChild(renderComments(post, comments));
+    if (state.openComments.has(social.id)) {
+      article.appendChild(renderComments(social, comments));
     }
 
     return article;
@@ -1036,6 +1026,9 @@
     state.repostPosts.forEach(function (post, id) {
       if (post && id) postIds.add(id);
     });
+    state.repostBlocks.forEach(function (block) {
+      if (block && block.id) postIds.add(block.id);
+    });
 
     var likes = new Map();
     var likedByMe = new Set();
@@ -1147,29 +1140,6 @@
     }
 
     return output;
-  }
-
-  async function handleReaction(button, blockId, emoji) {
-    if (!ensureWritable()) return;
-    if (!window.onpostt.isValidReaction(emoji)) {
-      reportError('Reação inválida.');
-      return;
-    }
-
-    var key = blockId + REACTION_SEP + emoji;
-    if (state.reactionPending.has(key)) return;
-    state.reactionPending.add(key);
-    button.disabled = true;
-
-    try {
-      await toggleReaction(blockId, emoji);
-    } catch (error) {
-      reportError(error.message);
-    } finally {
-      state.reactionPending.delete(key);
-      button.disabled = false;
-      if (state.pubkey) renderProfile();
-    }
   }
 
   async function handleCommentReaction(button, commentId, emoji) {
@@ -1498,9 +1468,17 @@
     try {
       var profiles = await window.onpostt.list({ mode: 'profile', limit: MAX_PROFILES });
       var lower = term.toLowerCase();
-      var matches = profiles
+      var byPubkey = new Map();
+      profiles.forEach(function (profile) {
+        if (!profile || typeof profile.pubkey !== 'string') return;
+        var current = byPubkey.get(profile.pubkey);
+        if (!current || (profile.created_at || 0) > (current.created_at || 0)) {
+          byPubkey.set(profile.pubkey, profile);
+        }
+      });
+
+      var matches = Array.from(byPubkey.values())
         .filter(function (profile) {
-          if (!profile || typeof profile.pubkey !== 'string') return false;
           var data = profileData(profile);
           return (
             profile.pubkey.toLowerCase().includes(lower) ||
@@ -1514,7 +1492,7 @@
         });
 
       matches.forEach(function (profile) {
-        if (profile && profile.pubkey) state.profiles.set(profile.pubkey, profile);
+        state.profiles.set(profile.pubkey, profile);
       });
 
       renderSearchResults(matches, term);
@@ -1604,11 +1582,16 @@
 
   async function loadPostAuthorProfiles() {
     var pubkeys = new Set();
-    state.repostPosts.forEach(function (post) {
-      if (post && post.pubkey && !state.profiles.has(post.pubkey)) {
-        pubkeys.add(post.pubkey);
+
+    function collect(block) {
+      if (block && block.pubkey && !state.profiles.has(block.pubkey)) {
+        pubkeys.add(block.pubkey);
       }
-    });
+    }
+
+    state.posts.forEach(collect);
+    state.repostPosts.forEach(collect);
+    state.repostBlocks.forEach(collect);
 
     var missing = Array.from(pubkeys).slice(0, MAX_PROFILE_LOOKUPS);
     await Promise.all(
@@ -1769,7 +1752,7 @@
   /* App completo reaproveitado do index.html                               */
   /* ---------------------------------------------------------------------- */
 
-  var APP_VIEWS = ['feed', 'profiles', 'notifications', 'chat', 'about'];
+  var APP_VIEWS = ['feed', 'profiles', 'profile-edit', 'settings', 'notifications', 'chat', 'about'];
 
   function appMain() {
     var shell = byId('app-shell');
@@ -1793,6 +1776,9 @@
     }
     var text = byId('net-label');
     if (text) text.textContent = label;
+    if (pill && RELAY && Array.isArray(RELAY.hosts)) {
+      pill.title = 'Relays (clique para gerenciar): ' + RELAY.hosts.join(' · ');
+    }
   }
 
   function delay(ms) {
@@ -1807,6 +1793,11 @@
     return relayReady();
   }
 
+  function relayConnectOptions() {
+    if (RELAY && typeof RELAY.connectOptions === 'function') return RELAY.connectOptions();
+    return { host: RELAY.hosts, socket: RELAY.sockets };
+  }
+
   async function ensureRelay() {
     if (!relayReady() && appMain()) await waitForRelay(8000);
     if (relayReady()) {
@@ -1814,8 +1805,16 @@
       return true;
     }
 
+    if (RELAY && typeof RELAY.probe === 'function') {
+      try {
+        await RELAY.probe();
+      } catch (error) {
+        /* segue com a lista configurada */
+      }
+    }
+
     try {
-      await window.onpostt.connect({ host: [ORIGIN] });
+      await window.onpostt.connect(relayConnectOptions());
     } catch (error) {
       if (!appMain()) setNet('error', 'offline');
       reportError('Não foi possível conectar ao relay: ' + error.message);
@@ -1825,10 +1824,27 @@
     return relayReady();
   }
 
+  async function reconnectRelays() {
+    if (appMain() || !state.pubkey) return;
+    setNet('warn', 'conectando');
+    try {
+      await window.onpostt.connect(relayConnectOptions());
+      await load(state.pubkey);
+      setNet(relayReady() ? 'ok' : 'warn', relayReady() ? 'online' : 'offline');
+    } catch (error) {
+      setNet('error', 'offline');
+      reportError(error.message);
+    }
+  }
+
   function setActiveNav(view) {
     var buttons = document.querySelectorAll('.nav-button[data-view]');
     for (var i = 0; i < buttons.length; i += 1) {
       buttons[i].classList.toggle('active', buttons[i].dataset.view === view);
+    }
+    var identityButton = byId('identity-button');
+    if (identityButton) {
+      identityButton.classList.toggle('active', view === 'profile');
     }
   }
 
@@ -1853,6 +1869,16 @@
       showProfilePage();
       return;
     }
+    if (view === 'chat') {
+      window.location.assign('/messages.html');
+      return;
+    }
+    // A busca sempre abre a página principal com a view correta. O app.js
+    // esconde o feed antes de buscar dados, evitando o flash do composer.
+    if (view === 'profiles') {
+      window.location.assign('/?view=profiles');
+      return;
+    }
     if (APP_VIEWS.indexOf(view) === -1 || !appMain()) {
       if (APP_VIEWS.indexOf(view) !== -1) {
         window.location.assign('/?view=' + encodeURIComponent(view));
@@ -1872,34 +1898,10 @@
     }
   }
 
-  async function openChatWith(pubkey) {
+  function openChatWith(pubkey) {
     if (!pubkey || !window.onpostt || !window.onpostt.isValidPublicKey(pubkey)) return;
     if (state.identity && pubkey.toLowerCase() === state.identity.publicKey.toLowerCase()) return;
-
-    var fallback = '/?view=chat&peer=' + encodeURIComponent(pubkey);
-    var form = byId('open-chat-form');
-    var input = byId('peer-input');
-
-    if (!appMain() || !form || !input || !(await waitForRelay(8000))) {
-      window.location.assign(fallback);
-      return;
-    }
-
-    var nav = document.querySelector('.nav-button[data-view="chat"]');
-    if (nav) nav.click();
-    showAppView();
-
-    var attempts = 0;
-    function attempt() {
-      var label = byId('chat-peer-key');
-      if (label && label.textContent.trim().toLowerCase() === pubkey.toLowerCase()) return;
-
-      attempts += 1;
-      input.value = pubkey;
-      form.dispatchEvent(new Event('submit', { bubbles: true, cancelable: true }));
-      if (attempts < 4) setTimeout(attempt, 500);
-    }
-    attempt();
+    window.location.assign('/messages.html?peer=' + encodeURIComponent(pubkey));
   }
 
   function bindEvents() {
@@ -1910,6 +1912,39 @@
           : null;
       if (button) handleNavClick(button);
     });
+
+    // A lista de relays mudou na interface. Com o app completo o app.js já
+    // reconecta; no perfil anônimo é esta página que precisa recarregar.
+    window.addEventListener('onpostt:relays-changed', function () {
+      if (!state.pubkey) return;
+      if (appMain()) {
+        // O app.js dispara relays-reconnected quando terminar.
+        return;
+      }
+      reconnectRelays();
+    });
+
+    // Depois que o app.js reconectou, atualiza o perfil que estiver aberto.
+    window.addEventListener('onpostt:relays-reconnected', function () {
+      var page = byId('profile-page');
+      if (!state.pubkey || !page || page.hidden) return;
+      load(state.pubkey).catch(function (error) {
+        reportError(error.message);
+      });
+    });
+
+    if (!appMain() && window.onpostt && typeof window.onpostt.on === 'function') {
+      window.onpostt.on('open', function (event) {
+        if (RELAY && typeof RELAY.setHostStatus === 'function' && event && event.url) {
+          RELAY.setHostStatus(event.url, true);
+        }
+      });
+      window.onpostt.on('close', function (event) {
+        if (RELAY && typeof RELAY.setHostStatus === 'function' && event && event.url) {
+          RELAY.setHostStatus(event.url, false);
+        }
+      });
+    }
 
     var copyButton = byId('copy-pubkey');
     if (copyButton) {
@@ -2005,9 +2040,6 @@
 
         if (button.dataset.action === 'like') handleLike(button, blockId);
         if (button.dataset.action === 'repost') handleRepost(button, blockId);
-        if (button.dataset.action === 'reaction') {
-          handleReaction(button, blockId, button.dataset.emoji);
-        }
         if (button.dataset.action === 'comment-reaction' && commentId) {
           handleCommentReaction(button, commentId, button.dataset.emoji);
         }
@@ -2018,6 +2050,24 @@
           handleDeleteComment(blockId, commentId);
         }
         if (button.dataset.action === 'delete') handleDelete(blockId);
+      });
+
+      // Clicar no corpo do post abre post.html; botões, links, chips,
+      // formulários e a área de comentários mantêm suas ações.
+      posts.addEventListener('click', function (event) {
+        if (
+          event.target.closest(
+            '[data-action], a, button, input, textarea, select, label, form, .comment-box, .post-actions, .profile-post-topics'
+          )
+        ) {
+          return;
+        }
+
+        var article = event.target.closest('.profile-post[data-block]');
+        if (!article) return;
+        window.location.assign(
+          postDetailUrl(article.dataset.block, article.dataset.repost || '')
+        );
       });
 
       posts.addEventListener('input', function (event) {
@@ -2061,9 +2111,33 @@
 
     var identityButton = byId('identity-button');
     if (identityButton && !appMain()) {
-      identityButton.textContent = state.identity
+      var displayName = state.identity
         ? state.identity.username || shortKey(state.identity.publicKey)
         : 'Entrar';
+      var nameNode = byId('nav-profile-name');
+      if (nameNode) nameNode.textContent = displayName;
+      var menuNameNode = byId('nav-profile-name-menu');
+      if (menuNameNode) menuNameNode.textContent = displayName;
+      var handleNode = byId('nav-profile-handle');
+      if (handleNode) {
+        handleNode.textContent = state.identity ? shortKey(state.identity.publicKey) : '';
+      }
+      var avatar = byId('nav-avatar');
+      if (avatar) {
+        avatar.textContent = state.identity
+          ? String(displayName).slice(0, 1).toUpperCase()
+          : '?';
+      }
+      var menuAvatar = byId('nav-avatar-menu');
+      if (menuAvatar) {
+        menuAvatar.textContent = state.identity
+          ? String(displayName).slice(0, 1).toUpperCase()
+          : '?';
+      }
+      var dropdown = byId('profile-dropdown');
+      if (dropdown) dropdown.hidden = true;
+      identityButton.classList.toggle('active', Boolean(state.identity));
+      identityButton.setAttribute('aria-haspopup', 'false');
       identityButton.title = state.identity
         ? 'Abrir o app completo'
         : 'Entrar com uma identidade';
