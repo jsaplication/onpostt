@@ -42,8 +42,6 @@
     openComments: new Set(),
     commentDrafts: new Map(),
     replyTo: new Map(),
-    likesTotal: 0,
-    commentsTotal: 0,
     followers: 0,
     following: 0,
     followsProfile: false,
@@ -55,6 +53,9 @@
   };
 
   var errorTimes = new Map();
+  var activeProfileTab = 'posts';
+  var postsCaptionText = 'Conteúdo público assinado.';
+  var photosCaptionText = 'Nenhuma foto ainda.';
 
   function byId(id) {
     return document.getElementById(id);
@@ -485,6 +486,13 @@
       img.loading = 'lazy';
       img.decoding = 'async';
       img.referrerPolicy = 'no-referrer';
+      img.dataset.imageModal = 'true';
+      img.tabIndex = 0;
+      img.setAttribute('role', 'button');
+      img.setAttribute(
+        'aria-label',
+        text ? 'Ampliar imagem: ' + text : 'Ampliar imagem'
+      );
       figure.appendChild(img);
       article.appendChild(figure);
       return;
@@ -887,9 +895,10 @@
       if (repostCount) {
         parts.push(repostCount + (repostCount >= MAX_REPOSTS ? '+' : '') + ' repost(s)');
       }
-      caption.textContent = parts.length
+      postsCaptionText = parts.length
         ? parts.join(' e ') + '.'
         : 'Conteúdo público assinado.';
+      caption.textContent = postsCaptionText;
     }
 
     if (items.length === 0) {
@@ -905,21 +914,101 @@
     });
   }
 
-  function recalcTotals() {
-    var postIds = new Set(
-      state.posts
-        .map(function (post) {
-          return post.id;
-        })
-        .filter(Boolean)
-    );
-
-    state.likesTotal = 0;
-    state.commentsTotal = 0;
-    postIds.forEach(function (id) {
-      state.likesTotal += state.likes.get(id) || 0;
-      state.commentsTotal += (state.comments.get(id) || []).length;
+  function profilePhotos() {
+    var photos = [];
+    state.posts.forEach(function (post) {
+      if (!post || !post.id) return;
+      var content = post.content;
+      if (!content || typeof content !== 'object' || Array.isArray(content)) return;
+      var image = normalizeImage(content.image);
+      if (!image) return;
+      photos.push({
+        post: post,
+        image: image,
+        text: typeof content.text === 'string' ? content.text : '',
+      });
     });
+
+    return photos.sort(function (a, b) {
+      return (b.post.created_at || 0) - (a.post.created_at || 0);
+    });
+  }
+
+  function renderPhotos() {
+    var grid = byId('profile-photos');
+    var empty = byId('profile-photos-empty');
+    var countNode = byId('profile-photos-count');
+    if (!grid) return;
+
+    var photos = profilePhotos();
+    clear(grid);
+    photosCaptionText = photos.length
+      ? photos.length + (photos.length >= MAX_POSTS ? '+' : '') + ' foto(s)'
+      : 'Nenhuma foto ainda.';
+
+    if (countNode) {
+      countNode.textContent = String(photos.length);
+      countNode.hidden = !photos.length;
+    }
+
+    if (!photos.length) {
+      if (empty) empty.hidden = false;
+      return;
+    }
+    if (empty) empty.hidden = true;
+
+    photos.forEach(function (photo) {
+      var figure = el('figure', 'profile-photo');
+      var img = document.createElement('img');
+      img.src = 'data:' + photo.image.mime + ';base64,' + photo.image.data;
+      img.alt = photo.text || 'Imagem publicada';
+      img.width = photo.image.width;
+      img.height = photo.image.height;
+      img.loading = 'lazy';
+      img.decoding = 'async';
+      img.referrerPolicy = 'no-referrer';
+      img.dataset.imageModal = 'true';
+      img.tabIndex = 0;
+      img.setAttribute('role', 'button');
+      img.setAttribute(
+        'aria-label',
+        photo.text ? 'Ampliar imagem: ' + photo.text : 'Ampliar imagem'
+      );
+      figure.appendChild(img);
+
+      var when = formatRelative(photo.post.created_at);
+      if (when) {
+        figure.appendChild(el('figcaption', 'profile-photo-caption', when));
+      }
+
+      grid.appendChild(figure);
+    });
+  }
+
+  function applyProfileTab(tab) {
+    activeProfileTab = tab === 'photos' ? 'photos' : 'posts';
+    var isPhotos = activeProfileTab === 'photos';
+    var postsTab = byId('profile-tab-posts');
+    var photosTab = byId('profile-tab-photos');
+    var postsPanel = byId('profile-panel-posts');
+    var photosPanel = byId('profile-panel-photos');
+    var title = byId('profile-posts-title');
+    var caption = byId('profile-posts-caption');
+
+    if (postsTab) {
+      postsTab.classList.toggle('is-active', !isPhotos);
+      postsTab.setAttribute('aria-selected', String(!isPhotos));
+      postsTab.tabIndex = isPhotos ? -1 : 0;
+    }
+    if (photosTab) {
+      photosTab.classList.toggle('is-active', isPhotos);
+      photosTab.setAttribute('aria-selected', String(isPhotos));
+      photosTab.tabIndex = isPhotos ? 0 : -1;
+    }
+    if (postsPanel) postsPanel.hidden = isPhotos;
+    if (photosPanel) photosPanel.hidden = !isPhotos;
+    if (title) title.textContent = isPhotos ? 'Fotos' : 'Publicações';
+    if (caption) caption.textContent = isPhotos ? photosCaptionText : postsCaptionText;
   }
 
   function renderProfile() {
@@ -990,14 +1079,8 @@
 
     setAvatar(name, state.pubkey, data.image);
 
-    recalcTotals();
-
     var statPosts = byId('stat-posts');
     if (statPosts) statPosts.textContent = String(state.posts.length) + (state.posts.length >= MAX_POSTS ? '+' : '');
-    var statLikes = byId('stat-likes');
-    if (statLikes) statLikes.textContent = String(state.likesTotal);
-    var statComments = byId('stat-comments');
-    if (statComments) statComments.textContent = String(state.commentsTotal);
     var statReposts = byId('stat-reposts');
     if (statReposts) {
       statReposts.textContent = String(
@@ -1012,6 +1095,8 @@
     if (statFollowing) statFollowing.textContent = String(state.following);
 
     renderPosts();
+    renderPhotos();
+    applyProfileTab(activeProfileTab);
   }
 
   function applySocial(posts, likeBlocks, commentBlocks, reactionBlocks, repostBlocks, followingBlocks, followerBlocks) {
@@ -2029,6 +2114,36 @@
       });
     }
 
+    var profileTabs = document.querySelector('.profile-tabs');
+    if (profileTabs) {
+      profileTabs.addEventListener('click', function (event) {
+        var tab = event.target.closest('[data-profile-tab]');
+        if (!tab) return;
+        applyProfileTab(tab.dataset.profileTab);
+      });
+
+      profileTabs.addEventListener('keydown', function (event) {
+        var tab = event.target.closest('[data-profile-tab]');
+        if (!tab) return;
+
+        var tabs = Array.prototype.slice.call(
+          profileTabs.querySelectorAll('[data-profile-tab]')
+        );
+        var index = tabs.indexOf(tab);
+        var next = null;
+
+        if (event.key === 'ArrowRight') next = tabs[(index + 1) % tabs.length];
+        if (event.key === 'ArrowLeft') next = tabs[(index - 1 + tabs.length) % tabs.length];
+        if (event.key === 'Home') next = tabs[0];
+        if (event.key === 'End') next = tabs[tabs.length - 1];
+        if (!next) return;
+
+        event.preventDefault();
+        applyProfileTab(next.dataset.profileTab);
+        next.focus();
+      });
+    }
+
     var posts = byId('profile-posts');
     if (posts) {
       posts.addEventListener('click', function (event) {
@@ -2057,7 +2172,7 @@
       posts.addEventListener('click', function (event) {
         if (
           event.target.closest(
-            '[data-action], a, button, input, textarea, select, label, form, .comment-box, .post-actions, .profile-post-topics'
+            '[data-action], a, button, input, textarea, select, label, form, img, .comment-box, .post-actions, .profile-post-topics'
           )
         ) {
           return;

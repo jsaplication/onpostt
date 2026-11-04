@@ -53,6 +53,7 @@
   var MAX_COMMENT_INDEX = 200;
   var MAX_COMMENTS_PER_POST = 200;
   var MAX_PROFILE_SUGGESTIONS = 24;
+  var MAX_NEW_CHAT_PROFILE_LOOKUPS = 120;
   var PROFILE_SEARCH_PAGE = 100;
   var MAX_PROFILE_SEARCH = 500;
   var MAX_NOTIFICATIONS = 200;
@@ -110,6 +111,7 @@
     trendingFetchedAt: 0,
     peer: null,
     chatQuery: '',
+    newChatQuery: '',
     chat: new Map(),
     chatPending: new Set(),
     chatUnsubs: [],
@@ -1811,6 +1813,13 @@
       img.loading = 'lazy';
       img.decoding = 'async';
       img.referrerPolicy = 'no-referrer';
+      img.dataset.imageModal = 'true';
+      img.tabIndex = 0;
+      img.setAttribute('role', 'button');
+      img.setAttribute(
+        'aria-label',
+        text ? 'Ampliar imagem: ' + text : 'Ampliar imagem'
+      );
       figure.appendChild(img);
       article.appendChild(figure);
       return;
@@ -3459,6 +3468,96 @@
     updateMessageBadge();
   }
 
+  function renderNewChatContacts() {
+    var list = byId('new-chat-list');
+    if (!list) return;
+
+    clear(list);
+
+    var me = state.identity ? state.identity.publicKey : '';
+    var entries = Array.from(state.following)
+      .filter(function (pubkey) {
+        return (
+          typeof pubkey === 'string' &&
+          onpostt.isValidPublicKey(pubkey) &&
+          !sameKey(pubkey, me) &&
+          !isBlockedPubkey(pubkey)
+        );
+      })
+      .map(function (pubkey) {
+        return {
+          pubkey: pubkey,
+          name: peerLabel(pubkey),
+        };
+      });
+
+    var query = state.newChatQuery.trim().toLowerCase();
+    if (query) {
+      entries = entries.filter(function (entry) {
+        return (
+          entry.name.toLowerCase().includes(query) ||
+          entry.pubkey.toLowerCase().includes(query)
+        );
+      });
+    }
+
+    if (entries.length === 0) {
+      list.appendChild(
+        el(
+          'p',
+          'faint small mb-0',
+          query
+            ? 'Nenhum contato encontrado.'
+            : 'Você ainda não segue ninguém. Abra uma conversa pela pubkey acima.'
+        )
+      );
+      return;
+    }
+
+    entries
+      .sort(function (a, b) {
+        return a.name.localeCompare(b.name, 'pt-BR');
+      })
+      .forEach(function (entry) {
+        var button = el(
+          'button',
+          'contact-button new-chat-contact' +
+            (sameKey(state.peer, entry.pubkey) ? ' active' : '')
+        );
+        button.type = 'button';
+        button.dataset.pubkey = entry.pubkey;
+        button.title = entry.name + ' · ' + shortKey(entry.pubkey);
+        button.setAttribute('aria-label', 'Conversar com ' + entry.name);
+
+        var info = profileData(profileOf(entry.pubkey));
+        button.appendChild(avatarNode(entry.name, entry.pubkey, info.image));
+
+        var meta = el('div', 'contact-meta');
+        meta.appendChild(el('strong', '', entry.name));
+        meta.appendChild(el('small', 'contact-preview mono', shortKey(entry.pubkey)));
+        button.appendChild(meta);
+
+        list.appendChild(button);
+      });
+  }
+
+  function ensureFollowedProfiles() {
+    var missing = Array.from(state.following).filter(function (pubkey) {
+      return (
+        typeof pubkey === 'string' &&
+        onpostt.isValidPublicKey(pubkey) &&
+        !state.profiles.has(pubkey) &&
+        !state.profileLookups.has(pubkey)
+      );
+    });
+    if (!missing.length) return Promise.resolve();
+
+    return loadProfilesForKeys(missing.slice(0, MAX_NEW_CHAT_PROFILE_LOOKUPS)).then(function () {
+      renderNewChatContacts();
+      renderContacts();
+    });
+  }
+
   async function refreshInbox() {
     var me = state.identity.publicKey;
     var results = await Promise.all([
@@ -3827,16 +3926,26 @@
   }
 
   function setNewChatFormOpen(open) {
-    var form = byId('open-chat-form');
-    if (!form) return;
-    form.hidden = !open;
+    var panel = byId('new-chat-panel');
+    if (!panel) return;
+    panel.hidden = !open;
 
     var toggle = byId('toggle-new-chat');
     if (toggle) toggle.setAttribute('aria-expanded', open ? 'true' : 'false');
 
+    var search = byId('new-chat-search');
+
     if (open) {
-      var input = byId('peer-input');
-      if (input) input.focus();
+      renderNewChatContacts();
+      ensureFollowedProfiles();
+      if (search) search.focus();
+      else {
+        var input = byId('peer-input');
+        if (input) input.focus();
+      }
+    } else {
+      state.newChatQuery = '';
+      if (search) search.value = '';
     }
   }
 
@@ -4641,6 +4750,9 @@
       if (MESSAGES_PAGE) {
         await Promise.all([refreshProfiles(), refreshSocial(), refreshInbox()]);
         renderContacts();
+        renderNewChatContacts();
+        var newChatPanel = byId('new-chat-panel');
+        if (newChatPanel && !newChatPanel.hidden) ensureFollowedProfiles();
         updateChatHeader();
         return;
       }
@@ -4890,7 +5002,7 @@
   function openPostFromCard(event) {
     if (
       event.target.closest(
-        '[data-action], a, button, input, textarea, select, label, form, .comment-box, .post-actions, .post-topics'
+        '[data-action], a, button, input, textarea, select, label, form, img, .comment-box, .post-actions, .post-topics'
       )
     ) {
       return;
@@ -5271,8 +5383,28 @@
     var toggleNewChat = byId('toggle-new-chat');
     if (toggleNewChat) {
       toggleNewChat.addEventListener('click', function () {
-        var form = byId('open-chat-form');
-        setNewChatFormOpen(Boolean(form && form.hidden));
+        var panel = byId('new-chat-panel');
+        setNewChatFormOpen(Boolean(panel && panel.hidden));
+      });
+    }
+
+    var newChatSearch = byId('new-chat-search');
+    if (newChatSearch) {
+      newChatSearch.addEventListener('input', function () {
+        state.newChatQuery = newChatSearch.value || '';
+        renderNewChatContacts();
+      });
+    }
+
+    var newChatList = byId('new-chat-list');
+    if (newChatList) {
+      newChatList.addEventListener('click', function (event) {
+        var button = event.target.closest('[data-pubkey]');
+        if (button) {
+          openChat(button.dataset.pubkey).catch(function (error) {
+            reportError(error.message);
+          });
+        }
       });
     }
 

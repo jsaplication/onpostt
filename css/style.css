@@ -501,7 +501,7 @@ button.topic-chip:focus-visible {
 
 .trending-panel {
   position: sticky;
-  top: 1rem;
+  top: 7rem;
   padding: 1rem;
 }
 
@@ -1793,6 +1793,10 @@ button.topic-chip:focus-visible {
 
   .demo-identity {
     margin-left: auto;
+    margin-top: 5px;
+  }
+  .brand{
+    
   }
 }
 
@@ -1899,4 +1903,88 @@ button.topic-chip:focus-visible {
     width: 100%;
     margin-left: 0;
   }
+}
+
+.icone_navbar{
+  float: left;
+}
+
+/* Visualizador de imagens das publicações (js/image-modal.js) */
+.post-media img[data-image-modal],
+.profile-post-media img[data-image-modal] {
+  cursor: zoom-in;
+}
+
+.post-media img[data-image-modal]:focus-visible,
+.profile-post-media img[data-image-modal]:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 3px;
+}
+
+body.image-modal-open {
+  overflow: hidden;
+}
+
+.image-modal {
+  position: fixed;
+  inset: 0;
+  width: 100vw;
+  max-width: none;
+  height: 100vh;
+  max-height: none;
+  margin: 0;
+  padding: 0;
+  overflow: hidden;
+  border: 0;
+  background: rgba(8, 6, 12, 0.92);
+  color: #fff;
+}
+
+.image-modal[open] {
+  display: grid;
+  place-items: center;
+}
+
+.image-modal::backdrop {
+  background: rgba(8, 6, 12, 0.88);
+  backdrop-filter: blur(5px);
+}
+
+.image-modal-img {
+  display: block;
+  width: auto;
+  height: auto;
+  max-width: calc(100vw - 2rem);
+  max-height: calc(100vh - 2rem);
+  border-radius: 10px;
+  background: #fff;
+  object-fit: contain;
+  box-shadow: 0 24px 70px rgba(0, 0, 0, 0.55);
+}
+
+.image-modal-close {
+  position: absolute;
+  top: max(0.75rem, env(safe-area-inset-top));
+  right: max(0.75rem, env(safe-area-inset-right));
+  z-index: 1;
+  display: grid;
+  place-items: center;
+  width: 42px;
+  height: 42px;
+  padding: 0;
+  border: 1px solid rgba(255, 255, 255, 0.3);
+  border-radius: 50%;
+  background: rgba(20, 16, 28, 0.78);
+  color: #fff;
+  font: inherit;
+  font-size: 1.5rem;
+  line-height: 1;
+  cursor: pointer;
+}
+
+.image-modal-close:hover,
+.image-modal-close:focus-visible {
+  border-color: rgba(255, 255, 255, 0.65);
+  background: rgba(255, 255, 255, 0.16);
+  outline: none;
 }

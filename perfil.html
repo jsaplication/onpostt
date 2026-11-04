@@ -85,11 +85,43 @@
         <span>onpostt</span>
       </a>
       <nav class="site-nav demo-nav" aria-label="Seções do demo">
-        <button type="button" class="nav-button" data-view="feed">Inicio</button>
-        <button type="button" class="nav-button" data-view="notifications">Notificações <span class="nav-badge" id="notification-badge" aria-live="polite" hidden>0</span></button>
-        <button type="button" class="nav-button" data-view="profiles">Buscar</button>
-        <button type="button" class="nav-button" data-view="chat">Conversas <span class="nav-badge" id="message-badge" aria-live="polite" hidden>0</span></button>
-        <button type="button" class="nav-button" data-view="about">Sobre</button>
+        <button type="button" class="nav-button" data-view="feed" aria-label="Início" title="Início">
+          <div class="icone_navbar">
+            <svg class="w-6 h-6 text-gray-800 dark:text-white" aria-hidden="true" xmlns="http://www.w3.org/2000/svg" width="24" height="24" fill="none" viewBox="0 0 24 24">
+              <path stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="m4 12 8-8 8 8M6 10.5V19a1 1 0 0 0 1 1h3v-3a1 1 0 0 1 1-1h2a1 1 0 0 1 1 1v3h3a1 1 0 0 0 1-1v-8.5"/>
+            </svg>
+          </div>
+        </button>
+        <button type="button" class="nav-button" data-view="notifications" aria-label="Notificações" title="Notificações">
+          <div class="icone_navbar">
+            <svg class="w-6 h-6 text-gray-800 dark:text-white" aria-hidden="true" xmlns="http://www.w3.org/2000/svg" width="24" height="24" fill="none" viewBox="0 0 24 24">
+              <path stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 5.365V3m0 2.365a5.338 5.338 0 0 1 5.133 5.368v1.8c0 2.386 1.867 2.982 1.867 4.175 0 .593 0 1.193-.538 1.193H5.538c-.538 0-.538-.6-.538-1.193 0-1.193 1.867-1.789 1.867-4.175v-1.8A5.338 5.338 0 0 1 12 5.365Zm-8.134 5.368a8.458 8.458 0 0 1 2.252-5.714m14.016 5.714a8.458 8.458 0 0 0-2.252-5.714M8.54 17.901a3.48 3.48 0 0 0 6.92 0H8.54Z"/>
+            </svg>
+          </div>
+          <span class="nav-badge" id="notification-badge" aria-live="polite" hidden>0</span>
+        </button>
+        <button type="button" class="nav-button" data-view="profiles" aria-label="Buscar" title="Buscar">
+          <div class="icone_navbar">
+            <svg class="w-6 h-6 text-gray-800 dark:text-white" aria-hidden="true" xmlns="http://www.w3.org/2000/svg" width="24" height="24" fill="none" viewBox="0 0 24 24">
+              <path stroke="currentColor" stroke-linecap="round" stroke-width="2" d="m21 21-3.5-3.5M17 10a7 7 0 1 1-14 0 7 7 0 0 1 14 0Z"/>
+            </svg>
+          </div>
+        </button>
+        <button type="button" class="nav-button" data-view="chat" aria-label="Conversas" title="Conversas">
+          <div class="icone_navbar">
+            <svg class="w-6 h-6 text-gray-800 dark:text-white" aria-hidden="true" xmlns="http://www.w3.org/2000/svg" width="24" height="24" fill="none" viewBox="0 0 24 24">
+              <path stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 17h6l3 3v-3h2V9h-2M4 4h11v8H9l-3 3v-3H4V4Z"/>
+            </svg>
+          </div>
+          <span class="nav-badge" id="message-badge" aria-live="polite" hidden>0</span>
+        </button>
+        <button type="button" class="nav-button" data-view="about" aria-label="Sobre" title="Sobre">
+          <div class="icone_navbar">
+            <svg class="w-6 h-6 text-gray-800 dark:text-white" aria-hidden="true" xmlns="http://www.w3.org/2000/svg" width="24" height="24" fill="none" viewBox="0 0 24 24">
+              <path stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M10 11h2v5m-2 0h4m-2.592-8.5h.01M21 12a9 9 0 1 1-18 0 9 9 0 0 1 18 0Z"/>
+            </svg>
+          </div>
+        </button>
       </nav>
       <div class="demo-identity">
         <span class="pill" id="net-status"><span class="status-dot" aria-hidden="true"></span><span id="net-label">conectando</span></span>
@@ -170,24 +202,54 @@
 
       <dl class="card profile-stats" aria-label="Resumo do perfil">
         <div><dt>Publicações</dt><dd id="stat-posts">0</dd></div>
-        <div><dt>Curtidas</dt><dd id="stat-likes">0</dd></div>
-        <div><dt>Comentários</dt><dd id="stat-comments">0</dd></div>
         <div><dt>Reposts</dt><dd id="stat-reposts">0</dd></div>
         <div><dt>Seguidores</dt><dd id="stat-followers">0</dd></div>
         <div><dt>Seguindo</dt><dd id="stat-following">0</dd></div>
       </dl>
 
+      <div class="profile-tabs" role="tablist" aria-label="Conteúdo do perfil">
+        <button
+          type="button"
+          class="profile-tab is-active"
+          id="profile-tab-posts"
+          role="tab"
+          aria-selected="true"
+          aria-controls="profile-panel-posts"
+          data-profile-tab="posts"
+        >Publicações</button>
+        <button
+          type="button"
+          class="profile-tab"
+          id="profile-tab-photos"
+          role="tab"
+          aria-selected="false"
+          aria-controls="profile-panel-photos"
+          data-profile-tab="photos"
+          tabindex="-1"
+        >Fotos <span class="profile-tab-count" id="profile-photos-count" hidden>0</span></button>
+      </div>
+
       <section class="profile-posts-section" aria-labelledby="profile-posts-title">
         <div class="profile-section-head">
           <div>
             <h2 id="profile-posts-title">Publicações</h2>
+            <p class="profile-posts-caption" id="profile-posts-caption"></p>
           </div>
           <button type="button" class="btn btn-small" id="refresh-profile">Atualizar</button>
         </div>
-        <div class="profile-posts" id="profile-posts" aria-live="polite"></div>
-        <div class="card empty-state" id="profile-posts-empty" hidden>
-          <p>Nenhuma publicação ainda.</p>
-          <p class="muted small">Quando este usuário publicar, o conteúdo aparecerá aqui.</p>
+        <div role="tabpanel" id="profile-panel-posts" aria-labelledby="profile-tab-posts">
+          <div class="profile-posts" id="profile-posts" aria-live="polite"></div>
+          <div class="card empty-state" id="profile-posts-empty" hidden>
+            <p>Nenhuma publicação ainda.</p>
+            <p class="muted small">Quando este usuário publicar, o conteúdo aparecerá aqui.</p>
+          </div>
+        </div>
+        <div role="tabpanel" id="profile-panel-photos" aria-labelledby="profile-tab-photos" hidden>
+          <div class="profile-photo-grid" id="profile-photos" aria-live="polite"></div>
+          <div class="card empty-state" id="profile-photos-empty" hidden>
+            <p>Nenhuma foto ainda.</p>
+            <p class="muted small">As imagens publicadas por este perfil aparecerão aqui.</p>
+          </div>
         </div>
       </section>
     </section>
@@ -200,6 +262,7 @@
   <script src="js/relays-ui.js" defer></script>
   <script src="js/onpostt.min.js" defer></script>
   <script src="js/auth.js" defer></script>
+  <script src="js/image-modal.js" defer></script>
   <script>
     /*
      * Reaproveita o app do index.html (feed, notificações, perfis, conversas e

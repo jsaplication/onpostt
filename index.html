@@ -94,12 +94,47 @@
         <span>onpostt</span>
       </a>
       <nav class="site-nav demo-nav" aria-label="Seções do demo">
-        <button type="button" class="nav-button active" data-view="feed">Inicio</button>
-        <button type="button" class="nav-button" data-view="notifications">Notificações <span class="nav-badge" id="notification-badge" aria-live="polite" hidden>0</span></button>
-        <button type="button" class="nav-button" data-view="profiles">Buscar</button>
-        <button type="button" class="nav-button" data-view="chat">Conversas <span class="nav-badge" id="message-badge" aria-live="polite" hidden>0</span></button>
-        <button type="button" class="nav-button" data-view="about">Sobre</button>
+        <button type="button" class="nav-button active" data-view="feed">
+           <div class="icone_navbar">
+            <svg class="w-6 h-6 text-gray-800 dark:text-white" aria-hidden="true" xmlns="http://www.w3.org/2000/svg" width="24" height="24" fill="none" viewBox="0 0 24 24">
+            <path stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="m4 12 8-8 8 8M6 10.5V19a1 1 0 0 0 1 1h3v-3a1 1 0 0 1 1-1h2a1 1 0 0 1 1 1v3h3a1 1 0 0 0 1-1v-8.5"/>
+            </svg>
+          </div>
+        </button>
+        <button type="button" class="nav-button" data-view="notifications" title="Notificações">
+          <div class="icone_navbar">
+            <svg class="w-6 h-6 text-gray-800 dark:text-white" aria-hidden="true" xmlns="http://www.w3.org/2000/svg" width="24" height="24" fill="none" viewBox="0 0 24 24">
+              <path stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 5.365V3m0 2.365a5.338 5.338 0 0 1 5.133 5.368v1.8c0 2.386 1.867 2.982 1.867 4.175 0 .593 0 1.193-.538 1.193H5.538c-.538 0-.538-.6-.538-1.193 0-1.193 1.867-1.789 1.867-4.175v-1.8A5.338 5.338 0 0 1 12 5.365Zm-8.134 5.368a8.458 8.458 0 0 1 2.252-5.714m14.016 5.714a8.458 8.458 0 0 0-2.252-5.714M8.54 17.901a3.48 3.48 0 0 0 6.92 0H8.54Z"/>
+            </svg>
+          </div>
+          <span class="nav-badge" id="notification-badge" aria-live="polite" hidden>0</span></button>
+
+        <button type="button" class="nav-button" data-view="profiles">
+           <div class="icone_navbar">
+              <svg class="w-6 h-6 text-gray-800 dark:text-white" aria-hidden="true" xmlns="http://www.w3.org/2000/svg" width="24" height="24" fill="none" viewBox="0 0 24 24">
+                <path stroke="currentColor" stroke-linecap="round" stroke-width="2" d="m21 21-3.5-3.5M17 10a7 7 0 1 1-14 0 7 7 0 0 1 14 0Z"/>
+              </svg>
+          </div>
+        </button>
+
+        <button type="button" class="nav-button" data-view="chat">
+           <div class="icone_navbar">
+            <svg class="w-6 h-6 text-gray-800 dark:text-white" aria-hidden="true" xmlns="http://www.w3.org/2000/svg" width="24" height="24" fill="none" viewBox="0 0 24 24">
+              <path stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 17h6l3 3v-3h2V9h-2M4 4h11v8H9l-3 3v-3H4V4Z"/>
+            </svg>
+          </div>
+          <span class="nav-badge" id="message-badge" aria-live="polite" hidden>0</span>
+        </button>
+        <button type="button" class="nav-button" data-view="about">
+          <div class="icone_navbar">
+            <svg class="w-6 h-6 text-gray-800 dark:text-white" aria-hidden="true" xmlns="http://www.w3.org/2000/svg" width="24" height="24" fill="none" viewBox="0 0 24 24">
+              <path stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M10 11h2v5m-2 0h4m-2.592-8.5h.01M21 12a9 9 0 1 1-18 0 9 9 0 0 1 18 0Z"/>
+            </svg>
+          </div>
+        </button>
       </nav>
+
+
       <div class="demo-identity">
         <span class="pill" id="net-status"><span class="status-dot" aria-hidden="true"></span><span id="net-label">conectando</span></span>
         <div class="profile-menu" id="profile-menu">
@@ -368,17 +403,28 @@
             <button type="button" class="direct-icon-btn" id="toggle-new-chat" aria-label="Nova conversa" aria-expanded="false" title="Nova conversa">✎</button>
           </div>
 
-          <form class="direct-new-form" id="open-chat-form" autocomplete="off" hidden>
-            <label class="direct-new-field">
-              <span class="sr-only">Pubkey do contato</span>
-              <input class="input mono" id="peer-input" placeholder="Pubkey do contato (03… ou 04…)" spellcheck="false">
+          <div class="direct-new-panel" id="new-chat-panel" hidden>
+            <form class="direct-new-form" id="open-chat-form" autocomplete="off">
+              <label class="direct-new-field">
+                <span class="sr-only">Pubkey do contato</span>
+                <input class="input mono" id="peer-input" placeholder="Pubkey do contato (03… ou 04…)" spellcheck="false">
+              </label>
+              <button type="submit" class="btn btn-primary btn-small">Abrir</button>
+            </form>
+
+            <div class="direct-new-divider" aria-hidden="true"><span>ou escolha um contato</span></div>
+
+            <label class="direct-new-search">
+              <span class="sr-only">Buscar contato que você segue por nome ou pubkey</span>
+              <input class="input" id="new-chat-search" type="search" placeholder="Buscar por nome ou pubkey" autocomplete="off" spellcheck="false">
             </label>
-            <button type="submit" class="btn btn-primary btn-small">Abrir</button>
-          </form>
+
+            <div class="new-chat-list" id="new-chat-list" aria-live="polite"></div>
+          </div>
 
           <label class="direct-search">
             <span class="sr-only">Buscar conversa</span>
-            <input class="input" id="contact-search" type="search" placeholder="Buscar" autocomplete="off" spellcheck="false">
+            <input class="input" id="contact-search" type="search" placeholder="Buscar conversa" autocomplete="off" spellcheck="false">
           </label>
 
           <p class="direct-sidebar-note faint small">Somente conversas enviadas ou recebidas por você.</p>
@@ -525,6 +571,7 @@
   <script src="js/relays-ui.js" defer></script>
   <script src="js/onpostt.min.js" defer></script>
   <script src="js/auth.js" defer></script>
+  <script src="js/image-modal.js" defer></script>
   <script src="js/app.js" defer></script>
 </body>
 </html>
