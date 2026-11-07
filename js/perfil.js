@@ -810,6 +810,10 @@
       actions.appendChild(deleteButton);
     }
 
+    if (window.onposttSignature && typeof window.onposttSignature.button === 'function') {
+      actions.appendChild(window.onposttSignature.button(post));
+    }
+
     article.appendChild(actions);
 
     if (state.openComments.has(social.id)) {
@@ -1551,7 +1555,11 @@
     setBusy(button, true);
 
     try {
-      var profiles = await window.onpostt.list({ mode: 'profile', limit: MAX_PROFILES });
+      var profiles = await window.onpostt.list({
+        mode: 'profile',
+        app: APP,
+        limit: MAX_PROFILES,
+      });
       var lower = term.toLowerCase();
       var byPubkey = new Map();
       profiles.forEach(function (profile) {
@@ -1609,7 +1617,7 @@
     await Promise.all(
       missing.map(function (candidate) {
         return window.onpostt
-          .list({ mode: 'profile', pubkey: candidate, limit: 1 })
+          .list({ mode: 'profile', app: APP, pubkey: candidate, limit: 1 })
           .then(function (profiles) {
             if (profiles && profiles[0]) state.profiles.set(candidate, profiles[0]);
           })
@@ -1647,7 +1655,7 @@
     var fetched = await Promise.all(
       missing.slice(0, MAX_REPOST_FETCHES).map(function (id) {
         return window.onpostt
-          .list({ mode: 'post', id: id, limit: 1 })
+          .list({ mode: 'post', app: APP, id: id, limit: 1 })
           .then(function (list) {
             return list && list[0] && list[0].mode === 'post' ? list[0] : null;
           })
@@ -1682,7 +1690,7 @@
     await Promise.all(
       missing.map(function (candidate) {
         return window.onpostt
-          .list({ mode: 'profile', pubkey: candidate, limit: 1 })
+          .list({ mode: 'profile', app: APP, pubkey: candidate, limit: 1 })
           .then(function (profiles) {
             if (profiles && profiles[0]) state.profiles.set(candidate, profiles[0]);
           })
@@ -1708,6 +1716,7 @@
       me && me !== target
         ? window.onpostt.list({
             mode: 'follow',
+            app: APP,
             query: [
               ['follower', me],
               ['following', target],
@@ -1719,6 +1728,7 @@
       me && me !== target
         ? window.onpostt.list({
             mode: 'block',
+            app: APP,
             query: [
               ['blocker', me],
               ['blocked', target],
@@ -1730,6 +1740,7 @@
       me && me !== target
         ? window.onpostt.list({
             mode: 'block',
+            app: APP,
             query: [
               ['blocker', target],
               ['blocked', me],
@@ -1739,14 +1750,24 @@
         : Promise.resolve([]);
 
     var results = await Promise.all([
-      window.onpostt.list({ mode: 'profile', pubkey: target, limit: 1 }),
-      window.onpostt.list({ mode: 'post', pubkey: target, limit: MAX_POSTS }),
-      window.onpostt.list({ mode: 'like', limit: MAX_SOCIAL }),
-      window.onpostt.list({ mode: 'comment', limit: MAX_SOCIAL }),
-      window.onpostt.list({ mode: 'reaction', limit: MAX_SOCIAL }),
-      window.onpostt.list({ mode: 'repost', limit: MAX_SOCIAL }),
-      window.onpostt.list({ mode: 'follow', query: [['follower', target]], limit: MAX_SOCIAL }),
-      window.onpostt.list({ mode: 'follow', query: [['following', target]], limit: MAX_SOCIAL }),
+      window.onpostt.list({ mode: 'profile', app: APP, pubkey: target, limit: 1 }),
+      window.onpostt.list({ mode: 'post', app: APP, pubkey: target, limit: MAX_POSTS }),
+      window.onpostt.list({ mode: 'like', app: APP, limit: MAX_SOCIAL }),
+      window.onpostt.list({ mode: 'comment', app: APP, limit: MAX_SOCIAL }),
+      window.onpostt.list({ mode: 'reaction', app: APP, limit: MAX_SOCIAL }),
+      window.onpostt.list({ mode: 'repost', app: APP, limit: MAX_SOCIAL }),
+      window.onpostt.list({
+        mode: 'follow',
+        app: APP,
+        query: [['follower', target]],
+        limit: MAX_SOCIAL,
+      }),
+      window.onpostt.list({
+        mode: 'follow',
+        app: APP,
+        query: [['following', target]],
+        limit: MAX_SOCIAL,
+      }),
       viewerFollowQuery,
       viewerBlockQuery,
       targetBlockQuery,
@@ -1770,6 +1791,7 @@
         });
         var created = await window.onpostt.list({
           mode: 'profile',
+          app: APP,
           pubkey: target,
           limit: 1,
         });

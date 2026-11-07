@@ -41,7 +41,7 @@
     }
 
     try {
-      var response = await fetch('/index.html', { cache: 'no-store' });
+      var response = await fetch('index.html', { cache: 'no-store' });
       if (!response.ok) throw new Error('HTTP ' + response.status);
 
       var doc = new DOMParser().parseFromString(await response.text(), 'text/html');

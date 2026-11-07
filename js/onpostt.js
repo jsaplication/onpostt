@@ -141,6 +141,19 @@
     });
   }
 
+  function normalizePresencePubkeys(list) {
+    var keys = [];
+    var seen = new Set();
+    toArray(list).forEach(function (pubkey) {
+      if (typeof pubkey !== 'string') return;
+      var value = pubkey.trim().toLowerCase();
+      if (!isValidPublicKey(value) || seen.has(value)) return;
+      seen.add(value);
+      keys.push(value);
+    });
+    return keys.slice(0, 500);
+  }
+
   function toArray(value) {
     if (Array.isArray(value)) return value;
     if (typeof value === 'string' && value.trim()) return [value.trim()];
@@ -663,6 +676,8 @@
     _listeners: new Map(),
     _shouldReconnect: true,
     _seq: 0,
+    _presenceWatches: new Map(),
+    _presenceSeq: 0,
     _reader: null,
     _readerReady: Promise.resolve(null),
 
@@ -816,6 +831,7 @@
         .then(function (token) {
           self._reader = token;
           self._resubscribeAll();
+          self._sendPresence();
           return token;
         })
         .catch(function (error) {
@@ -1181,7 +1197,7 @@
       };
 
       ws.onmessage = function (event) {
-        self._handleMessage(event.data);
+        self._handleMessage(event.data, ws);
       };
 
       ws.onerror = function () {
@@ -1303,7 +1319,7 @@
       });
     },
 
-    _handleMessage: function (raw) {
+    _handleMessage: function (raw, socket) {
       var data;
       try {
         data = JSON.parse(raw);
@@ -1316,8 +1332,37 @@
       this.emit('message', data);
 
       if (data.response === 'hello') {
+        if (socket) socket.__onposttPresence = data.presence === true;
         this.serverInfo = data;
         this.emit('hello', data);
+        this._sendPresence();
+        return;
+      }
+
+      if (data.response === 'presence') {
+        var states = Array.isArray(data.states) ? data.states : [];
+        this._presenceWatches.forEach(function (entry) {
+          if (typeof entry.handler !== 'function') return;
+          var filtered = states.filter(function (state) {
+            return (
+              state &&
+              typeof state.pubkey === 'string' &&
+              entry.keys.has(state.pubkey.toLowerCase())
+            );
+          });
+          if (filtered.length === 0) return;
+          try {
+            entry.handler(filtered, socket && socket.url ? socket.url : '');
+          } catch (error) {
+            if (root.console) root.console.error('[onpostt] handler de presença falhou:', error);
+          }
+        });
+        this.emit('presence', data);
+        return;
+      }
+
+      if (data.response === 'presence_subscribed' || data.response === 'presence_unsubscribed') {
+        this.emit(data.response, data);
         return;
       }
 
@@ -1560,6 +1605,72 @@
       this._subscriptions.delete(id);
       this._send({ request: 'unsubscribe', subscription: id });
       return true;
+    },
+
+    /* --------------------------- presença ---------------------------- */
+
+    /**
+     * Observa presença em lote. Uma única `presence_sub` é enviada por
+     * conexão com a união das pubkeys observadas, independentemente da
+     * quantidade de contatos. O relay só envia eventos quando o estado muda.
+     */
+    watchPresence: function (pubkeys, handler) {
+      var self = this;
+      var token = 'presence_' + ++this._presenceSeq;
+      var entry = {
+        keys: new Set(normalizePresencePubkeys(pubkeys)),
+        handler: typeof handler === 'function' ? handler : null,
+      };
+      this._presenceWatches.set(token, entry);
+      this._sendPresence();
+
+      return {
+        update: function (nextPubkeys) {
+          var current = self._presenceWatches.get(token);
+          if (!current) return;
+          current.keys = new Set(normalizePresencePubkeys(nextPubkeys));
+          self._sendPresence();
+        },
+        unsubscribe: function () {
+          if (!self._presenceWatches.delete(token)) return;
+          self._sendPresence();
+        },
+      };
+    },
+
+    _sendPresence: function () {
+      var self = this;
+      var keys = new Set();
+      this._presenceWatches.forEach(function (entry) {
+        entry.keys.forEach(function (key) {
+          keys.add(key);
+        });
+      });
+
+      return this._readerReady
+        .then(function (reader) {
+          if (!reader) return 0;
+          var text = JSON.stringify({
+            request: 'presence_sub',
+            pubkeys: Array.from(keys).slice(0, 500),
+            reader: reader,
+          });
+          var sent = 0;
+          self.sockets.forEach(function (socket) {
+            if (!isOpen(socket) || socket.__onposttPresence !== true) return;
+            try {
+              socket.send(text);
+              sent += 1;
+            } catch (error) {
+              /* o close remove o socket */
+            }
+          });
+          return sent;
+        })
+        .catch(function (error) {
+          self.emit('error', { type: 'presence', error: error });
+          return 0;
+        });
     },
 
     /* ---------------------------- envio ------------------------------ */

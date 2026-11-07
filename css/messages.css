@@ -358,6 +358,18 @@
   display: none;
 }
 
+.messages-body .direct-peer-avatar {
+  position: relative;
+}
+
+.messages-body .direct-peer-avatar > .presence-dot {
+  position: absolute;
+  right: 0;
+  bottom: 0;
+  width: 10px;
+  height: 10px;
+}
+
 .messages-body .direct-peer-avatar .avatar {
   width: 42px;
   height: 42px;

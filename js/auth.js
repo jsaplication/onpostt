@@ -769,17 +769,33 @@
     }, 1000);
   }
 
+  function localUrl(value) {
+    if (typeof value !== 'string' || !value) return null;
+
+    try {
+      var url = new URL(value, root.location.origin);
+      if (url.origin !== root.location.origin) return null;
+      if (url.protocol !== 'http:' && url.protocol !== 'https:') return null;
+      if (url.username || url.password) return null;
+      if (url.pathname.charAt(0) !== '/') return null;
+      return url;
+    } catch (error) {
+      return null;
+    }
+  }
+
   function nextUrl(fallback) {
-    var target = fallback || '/';
+    var target = '/';
+    var fallbackUrl = localUrl(fallback || '/');
+    if (fallbackUrl) {
+      target = fallbackUrl.pathname + fallbackUrl.search + fallbackUrl.hash;
+    }
+
     try {
       var value = new URLSearchParams(root.location.search).get('next');
-      if (
-        typeof value === 'string' &&
-        value.charAt(0) === '/' &&
-        value.charAt(1) !== '/' &&
-        value.indexOf('\\') === -1
-      ) {
-        var path = value.split('?')[0].split('#')[0].toLowerCase();
+      var next = localUrl(value);
+      if (next) {
+        var path = next.pathname.toLowerCase();
         var authPaths = [
           '/login',
           '/entrar',
@@ -789,7 +805,9 @@
           '/signup',
           '/cadastro.html',
         ];
-        if (authPaths.indexOf(path) === -1) target = value;
+        if (authPaths.indexOf(path) === -1) {
+          target = next.pathname + next.search + next.hash;
+        }
       }
     } catch (error) {
       /* query string inválida */
@@ -800,7 +818,12 @@
   async function redirectIfAuthenticated(target) {
     var identity = await ensureSession();
     if (identity) {
-      root.location.replace(target || nextUrl('/'));
+      var destination = localUrl(target) || localUrl(nextUrl('/'));
+      root.location.replace(
+        destination
+          ? destination.pathname + destination.search + destination.hash
+          : '/'
+      );
       return identity;
     }
     return null;

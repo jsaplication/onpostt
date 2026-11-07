@@ -438,6 +438,10 @@
             <div class="direct-peer-meta">
               <strong id="chat-peer-label">Nenhuma conversa</strong>
               <p class="faint small mono truncate mb-0" id="chat-peer-key">Escolha um contato ao lado</p>
+              <span class="presence-line" id="chat-peer-presence" hidden>
+                <span class="presence-dot" aria-hidden="true"></span>
+                <span id="chat-peer-presence-label">Offline</span>
+              </span>
             </div>
             <div class="chat-head-actions direct-head-actions">
               <button type="button" class="btn btn-small btn-ghost" id="refresh-chat" disabled>Atualizar</button>
@@ -572,6 +576,7 @@
   <script src="js/onpostt.min.js" defer></script>
   <script src="js/auth.js" defer></script>
   <script src="js/image-modal.js" defer></script>
+  <script src="js/signature-inspector.js" defer></script>
   <script src="js/app.js" defer></script>
 </body>
 </html>

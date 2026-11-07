@@ -52,6 +52,9 @@
   var MAX_SOCIAL = 500;
   var MAX_COMMENT_INDEX = 200;
   var MAX_COMMENTS_PER_POST = 200;
+  var MAX_PRESENCE_WATCH = 500;
+  var COMMENT_RENDER_DELAY_MS = 80;
+  var PRESENCE_SYNC_DELAY_MS = 200;
   var MAX_PROFILE_SUGGESTIONS = 24;
   var MAX_NEW_CHAT_PROFILE_LOOKUPS = 120;
   var PROFILE_SEARCH_PAGE = 100;
@@ -94,6 +97,7 @@
     repostPending: new Set(),
     openComments: new Set(),
     commentDrafts: new Map(),
+    commentSubscriptions: new Map(),
     replyTo: new Map(),
     view: 'feed',
     feedMode: 'global',
@@ -119,6 +123,7 @@
     outbox: new Map(),
     hiddenChats: new Map(),
     messageRead: new Set(),
+    peerReads: new Map(),
     chatMediaBusy: false,
     audioRecording: null,
     profileDirty: false,
@@ -142,7 +147,13 @@
     notifications: [],
     notificationRead: new Set(),
     showReadNotifications: false,
+    presence: new Map(),
+    presenceSources: new Map(),
+    presenceWatch: null,
+    presenceWatchSignature: '',
+    presenceWatched: new Set(),
     detail: null,
+    connectedOnce: false,
     ready: false,
   };
 
@@ -152,8 +163,13 @@
   var MAX_PROFILE_IMAGE_DIMENSION = 150;
 
   var refreshTimer = null;
+  var notificationRefreshTimer = null;
   var composePreviewTimer = null;
   var profileSearchTimer = null;
+  var commentSurfaceTimer = null;
+  var commentSurfacePending = new Set();
+  var chatRenderTimer = null;
+  var chatReconnectTimer = null;
   var linkPreviewCache = new Map();
   var errorTimes = new Map();
 
@@ -485,28 +501,22 @@
     }
   }
 
-  function fetchLinkPreview(url) {
+  /*
+   * Prévia de link 100% local: o cliente funciona em qualquer hospedagem
+   * estática, sem depender de um backend. Metadados remotos (Open Graph)
+   * exigiriam um proxy e não são necessários para o cartão básico.
+   */
+  function buildLinkPreview(url) {
     if (linkPreviewCache.has(url)) return linkPreviewCache.get(url);
 
-    var promise = fetch('/api/link-preview?url=' + encodeURIComponent(url), {
-      headers: { Accept: 'application/json' },
-    })
-      .then(function (response) {
-        if (!response.ok) throw new Error('Prévia indisponível.');
-        return response.json();
-      })
-      .then(function (data) {
-        if (
-          !data ||
-          (!data.title && !data.description && !data.image)
-        ) {
-          return null;
-        }
-        return data;
-      })
-      .catch(function () {
-        return null;
-      });
+    var promise = Promise.resolve({
+      url: url,
+      finalUrl: url,
+      site: 'Link externo',
+      title: hostnameOf(url) || url,
+      description: '',
+      image: '',
+    });
 
     linkPreviewCache.set(url, promise);
     return promise;
@@ -602,7 +612,7 @@
       var card = createLinkPreviewCard(link);
       container.appendChild(card);
 
-      fetchLinkPreview(link.href).then(function (data) {
+      buildLinkPreview(link.href).then(function (data) {
         if (!card.isConnected) return;
         if (!data) {
           card.remove();
@@ -1527,9 +1537,8 @@
 
     var targetId = repost ? repost.id : post.id;
     state.detail = { post: post, repost: repost, targetId: targetId };
-    state.openComments.add(targetId);
-
-    await loadCommentsFor(targetId);
+    // Os comentários não são abertos automaticamente na página de detalhe.
+    // O usuário precisa clicar em "Comentar" para carregar a thread.
     await ensureDetailProfiles(post, repost, targetId);
     renderPostDetail();
     switchView('post');
@@ -1943,6 +1952,10 @@
       actions.appendChild(deleteButton);
     }
 
+    if (window.onposttSignature && typeof window.onposttSignature.button === 'function') {
+      actions.appendChild(window.onposttSignature.button(post));
+    }
+
     var idLabel = el(
       'span',
       'block-id',
@@ -2169,7 +2182,6 @@
       }
 
       renderPostSurfaces();
-      scheduleRefresh();
     } catch (error) {
       reportError(error.message);
     } finally {
@@ -2251,7 +2263,6 @@
       }
 
       renderPostSurfaces();
-      scheduleRefresh();
     } catch (error) {
       reportError(error.message);
     } finally {
@@ -2311,7 +2322,6 @@
         }
         await toggleReaction(commentId, emoji);
       }
-      scheduleRefresh();
     } catch (error) {
       reportError(error.message);
     } finally {
@@ -2325,11 +2335,13 @@
   function handleReply(blockId, commentId) {
     state.replyTo.set(blockId, commentId);
     state.openComments.add(blockId);
-    renderPostSurfaces();
+    updateCommentSurface(blockId);
     if (!state.commentLoaded.has(blockId)) {
       loadCommentsFor(blockId).catch(function (error) {
         reportError(error.message);
       });
+    } else {
+      ensureCommentSubscription(blockId);
     }
 
     var form =
@@ -2345,21 +2357,30 @@
 
   function handleCancelReply(blockId) {
     state.replyTo.delete(blockId);
-    renderPostSurfaces();
+    updateCommentSurface(blockId);
   }
 
   function handleCommentToggle(blockId) {
     if (state.openComments.has(blockId)) {
       state.openComments.delete(blockId);
-      renderPostSurfaces();
+      commentSurfacePending.delete(blockId);
+      stopCommentSubscription(blockId);
+      // Ao reabrir, o histórico é consultado de novo. Isso reflete exclusões
+      // feitas enquanto a thread estava fechada e evita reutilizar cache velho.
+      state.commentLoaded.delete(blockId);
+      updateCommentSurface(blockId);
       return;
     }
 
     state.openComments.add(blockId);
-    renderPostSurfaces();
-    loadCommentsFor(blockId).catch(function (error) {
-      reportError(error.message);
-    });
+    updateCommentSurface(blockId);
+    if (state.commentLoaded.has(blockId)) {
+      ensureCommentSubscription(blockId);
+    } else {
+      loadCommentsFor(blockId).catch(function (error) {
+        reportError(error.message);
+      });
+    }
   }
 
   async function handleComment(form, blockId) {
@@ -2381,11 +2402,12 @@
         content: content,
         app: APP,
       });
+      mergeLiveComments(blockId, [output.block]);
+      ensureCommentSubscription(blockId);
       await notifyInteraction(blockId, output.block, 'comment');
       state.commentDrafts.delete(blockId);
       state.replyTo.delete(blockId);
-      await loadCommentsFor(blockId);
-      renderPostSurfaces();
+      updateCommentSurface(blockId);
       toast(parent ? 'Resposta publicada.' : 'Comentário publicado.');
     } catch (error) {
       reportError(error.message);
@@ -2405,8 +2427,13 @@
         app: APP,
       });
       state.replyTo.delete(blockId);
-      await loadCommentsFor(blockId);
-      renderPostSurfaces();
+      state.comments.set(
+        blockId,
+        (state.comments.get(blockId) || []).filter(function (comment) {
+          return comment.id !== commentId;
+        })
+      );
+      updateCommentSurface(blockId);
       toast('Comentário excluído.');
     } catch (error) {
       reportError(error.message);
@@ -2433,6 +2460,11 @@
       state.openComments.delete(blockId);
       state.commentLoaded.delete(blockId);
       state.commentLoading.delete(blockId);
+      state.commentDrafts.delete(blockId);
+      state.replyTo.delete(blockId);
+      state.comments.delete(blockId);
+      stopCommentSubscription(blockId);
+      commentSurfacePending.delete(blockId);
       if (state.detail && state.detail.post && state.detail.post.id === blockId) {
         state.detail = null;
         if (POST_PAGE) {
@@ -3244,6 +3276,53 @@
     return inboxMessagesFor(peer).concat(outboxMessagesFor(peer));
   }
 
+  function peerReadSet(peer) {
+    var key = typeof peer === 'string' ? peer.toLowerCase() : '';
+    if (!key) return null;
+
+    var set = state.peerReads.get(key);
+    if (!set) {
+      set = new Set();
+      state.peerReads.set(key, set);
+    }
+    return set;
+  }
+
+  function peerHasRead(peer, messageId) {
+    var key = typeof peer === 'string' ? peer.toLowerCase() : '';
+    var normalized = typeof messageId === 'string' ? messageId.toLowerCase() : '';
+    if (!key || !normalized) return false;
+
+    var set = state.peerReads.get(key);
+    return Boolean(set && set.has(normalized));
+  }
+
+  function mergePeerReads(peer, receipts) {
+    if (!peer || !Array.isArray(receipts) || receipts.length === 0) return false;
+
+    var set = peerReadSet(peer);
+    if (!set) return false;
+
+    var changed = false;
+    receipts.forEach(function (receipt) {
+      if (!receipt || receipt.mode !== 'message_read' || receipt.app !== APP) return;
+      if (!sameKey(receipt.pubkey, peer)) return;
+
+      var content = contentObject(receipt);
+      var ids = content && content.read;
+      if (!Array.isArray(ids)) return;
+
+      ids.forEach(function (id) {
+        var normalized = typeof id === 'string' ? id.toLowerCase() : '';
+        if (!normalized || set.has(normalized)) return;
+        set.add(normalized);
+        changed = true;
+      });
+    });
+
+    return changed;
+  }
+
   function unreadMessagesFor(peer) {
     if (isChatHidden(peer) || isBlockedPubkey(peer)) return [];
     return inboxMessagesFor(peer).filter(function (block) {
@@ -3267,9 +3346,183 @@
     badge.textContent = total > 99 ? '99+' : String(total);
   }
 
+  function normalizedPresenceKey(pubkey) {
+    return typeof pubkey === 'string' ? pubkey.toLowerCase() : '';
+  }
+
+  function presenceFor(pubkey) {
+    var key = normalizedPresenceKey(pubkey);
+    return key ? state.presence.get(key) || null : null;
+  }
+
+  function presenceDot(pubkey) {
+    var status = presenceFor(pubkey);
+    if (!status || !status.known) return null;
+    var dot = el('span', 'presence-dot ' + (status.online ? 'is-online' : 'is-offline'));
+    dot.setAttribute('aria-hidden', 'true');
+    dot.title = status.online ? 'Online' : 'Offline';
+    return dot;
+  }
+
+  function presenceLabel(pubkey) {
+    var status = presenceFor(pubkey);
+    if (!status || !status.known) return '';
+    if (status.online) return 'Online';
+    if (status.lastSeen) {
+      return 'Visto ' + formatRelative(Math.floor(status.lastSeen / 1000));
+    }
+    return 'Offline';
+  }
+
+  function ensurePresenceDot(container, pubkey) {
+    if (!container) return;
+    var current = container.querySelector('.presence-dot');
+    if (current && current.parentNode) current.parentNode.removeChild(current);
+    var dot = presenceDot(pubkey);
+    if (dot) container.appendChild(dot);
+  }
+
+  function updateContactPresence(pubkey) {
+    var key = normalizedPresenceKey(pubkey);
+    if (!key) return;
+    document
+      .querySelectorAll('.contact-button[data-pubkey="' + key + '"]')
+      .forEach(function (button) {
+        var avatar = button.querySelector('.contact-avatar');
+        ensurePresenceDot(avatar || button, key);
+      });
+    if (state.peer && sameKey(state.peer, key)) updateChatHeader();
+  }
+
+  function recomputePresence(key) {
+    var sources = state.presenceSources.get(key);
+    if (!sources || sources.size === 0) {
+      state.presence.delete(key);
+      return;
+    }
+
+    var online = false;
+    var lastSeen = 0;
+    sources.forEach(function (entry) {
+      if (entry.online) online = true;
+      lastSeen = Math.max(lastSeen, Number(entry.lastSeen) || 0);
+    });
+    state.presence.set(key, { known: true, online: online, lastSeen: lastSeen });
+  }
+
+  function applyPresenceStates(states, source) {
+    if (!Array.isArray(states)) return;
+    var origin = source || 'default';
+    var changed = new Set();
+
+    states.forEach(function (item) {
+      if (!item || typeof item.pubkey !== 'string') return;
+      var key = normalizedPresenceKey(item.pubkey);
+      if (!key || !state.presenceWatched.has(key)) return;
+
+      var sources = state.presenceSources.get(key);
+      if (!sources) {
+        sources = new Map();
+        state.presenceSources.set(key, sources);
+      }
+      sources.set(origin, {
+        online: Boolean(item.online),
+        lastSeen: Number(item.lastSeen) || 0,
+      });
+      recomputePresence(key);
+      changed.add(key);
+    });
+
+    changed.forEach(updateContactPresence);
+  }
+
+  /**
+   * Ao fechar um relay, descarta apenas o que veio dele. Se outro relay
+   * continua conectado, o status online não é derrubado por engano.
+   */
+  function clearPresenceSource(source) {
+    if (!source) return;
+    var changed = new Set();
+    state.presenceSources.forEach(function (sources, key) {
+      if (!sources.delete(source)) return;
+      recomputePresence(key);
+      changed.add(key);
+    });
+    changed.forEach(updateContactPresence);
+  }
+
+  function clearPresenceState() {
+    state.presence.clear();
+    state.presenceSources.clear();
+    document.querySelectorAll('.presence-dot').forEach(function (dot) {
+      if (dot.parentNode) dot.parentNode.removeChild(dot);
+    });
+    updateChatHeader();
+  }
+
+  function presenceWatchKeys() {
+    var me = state.identity ? state.identity.publicKey : '';
+    var keys = [];
+    var seen = new Set();
+
+    function add(pubkey) {
+      if (
+        typeof pubkey !== 'string' ||
+        !onpostt.isValidPublicKey(pubkey) ||
+        sameKey(pubkey, me) ||
+        isBlockedPubkey(pubkey)
+      ) {
+        return;
+      }
+      var key = normalizedPresenceKey(pubkey);
+      if (!key || seen.has(key)) return;
+      seen.add(key);
+      keys.push(key);
+    }
+
+    if (state.peer) add(state.peer);
+    state.inbox.forEach(function (messages, pubkey) {
+      add(pubkey);
+    });
+    state.outbox.forEach(function (messages, pubkey) {
+      add(pubkey);
+    });
+
+    return keys.slice(0, MAX_PRESENCE_WATCH);
+  }
+
+  function syncPresenceWatch() {
+    if (!state.presenceWatch || typeof state.presenceWatch.update !== 'function') return;
+    var keys = presenceWatchKeys();
+    var signature = keys.join('|');
+    if (signature === state.presenceWatchSignature) return;
+
+    state.presenceWatchSignature = signature;
+    var nextWatched = new Set(keys);
+    state.presenceWatched.forEach(function (key) {
+      if (nextWatched.has(key)) return;
+      state.presenceSources.delete(key);
+      state.presence.delete(key);
+    });
+    state.presenceWatched = nextWatched;
+    state.presenceWatch.update(keys);
+  }
+
+  function startPresence() {
+    if (!MESSAGES_PAGE || state.presenceWatch || typeof onpostt.watchPresence !== 'function') {
+      return;
+    }
+    state.presenceWatch = onpostt.watchPresence([], function (states, source) {
+      applyPresenceStates(states, source);
+    });
+    syncPresenceWatch();
+  }
+
   function updateChatHeader() {
     var label = byId('chat-peer-label');
     var key = byId('chat-peer-key');
+    var presence = byId('chat-peer-presence');
+    var presenceLabelNode = byId('chat-peer-presence-label');
     var avatar = byId('chat-peer-avatar');
     var input = byId('chat-input');
     var send = byId('chat-send');
@@ -3283,6 +3536,17 @@
     if (label) label.textContent = hasPeer ? peerLabel(state.peer) : 'Nenhuma conversa';
     if (key) key.textContent = hasPeer ? state.peer : 'Escolha um contato ao lado';
 
+    if (presence) {
+      var peerStatus = hasPeer ? presenceFor(state.peer) : null;
+      var known = Boolean(peerStatus && peerStatus.known);
+      presence.hidden = !known;
+      presence.classList.toggle('is-online', Boolean(known && peerStatus.online));
+      presence.classList.toggle('is-offline', Boolean(known && !peerStatus.online));
+      if (presenceLabelNode) {
+        presenceLabelNode.textContent = known ? presenceLabel(state.peer) : '';
+      }
+    }
+
     if (avatar) {
       clear(avatar);
       avatar.hidden = !hasPeer;
@@ -3291,6 +3555,7 @@
         avatar.appendChild(
           avatarNode(peerInfo.name || peerLabel(state.peer), state.peer, peerInfo.image)
         );
+        ensurePresenceDot(avatar, state.peer);
       }
     }
 
@@ -3354,6 +3619,7 @@
         el('p', 'faint small mb-0', 'Nenhuma conversa ainda. Envie ou receba uma mensagem.')
       );
       updateMessageBadge();
+      syncPresenceWatch();
       return;
     }
 
@@ -3436,7 +3702,10 @@
         );
 
         var profileInfo = profileData(profileOf(pubkey));
-        button.appendChild(avatarNode(name, pubkey, profileInfo.image));
+        var avatarWrap = el('span', 'contact-avatar');
+        avatarWrap.appendChild(avatarNode(name, pubkey, profileInfo.image));
+        ensurePresenceDot(avatarWrap, pubkey);
+        button.appendChild(avatarWrap);
 
         var meta = el('div', 'contact-meta');
         meta.appendChild(el('strong', '', name));
@@ -3466,6 +3735,7 @@
       });
 
     updateMessageBadge();
+    syncPresenceWatch();
   }
 
   function renderNewChatContacts() {
@@ -3530,7 +3800,10 @@
         button.setAttribute('aria-label', 'Conversar com ' + entry.name);
 
         var info = profileData(profileOf(entry.pubkey));
-        button.appendChild(avatarNode(entry.name, entry.pubkey, info.image));
+        var avatarWrap = el('span', 'contact-avatar');
+        avatarWrap.appendChild(avatarNode(entry.name, entry.pubkey, info.image));
+        ensurePresenceDot(avatarWrap, entry.pubkey);
+        button.appendChild(avatarWrap);
 
         var meta = el('div', 'contact-meta');
         meta.appendChild(el('strong', '', entry.name));
@@ -3709,6 +3982,9 @@
       maybeUnhideChat(to, block);
       ensurePeerProfile(to);
       renderContacts();
+      ingestMessageForOpenChat(block).catch(function (error) {
+        reportError(error.message);
+      });
       return;
     }
 
@@ -3724,6 +4000,12 @@
     } else {
       renderContacts();
     }
+
+    // A assinatura global de mensagens já recebe tudo que entra ou sai da
+    // pubkey atual. Se a conversa estiver aberta, atualiza somente o chat.
+    ingestMessageForOpenChat(block).catch(function (error) {
+      reportError(error.message);
+    });
   }
 
   function subscribeInbox() {
@@ -3736,8 +4018,24 @@
 
     onpostt.sub(
       { mode: 'message_read', app: APP, pubkey: state.identity.publicKey, limit: 1 },
-      function () {
-        scheduleRefresh();
+      function (event) {
+        var changed = false;
+        (event.blocks || []).forEach(function (receipt) {
+          if (!receipt || receipt.mode !== 'message_read' || receipt.app !== APP) return;
+          var content = contentObject(receipt);
+          var ids = content && content.read;
+          if (!Array.isArray(ids)) return;
+          ids.forEach(function (id) {
+            var normalized = typeof id === 'string' ? id.toLowerCase() : '';
+            if (!normalized || state.messageRead.has(normalized)) return;
+            state.messageRead.add(normalized);
+            changed = true;
+          });
+        });
+        if (changed) {
+          renderContacts();
+          updateMessageBadge();
+        }
       }
     );
   }
@@ -3745,6 +4043,14 @@
   function formatAudioDuration(seconds) {
     var total = Math.max(1, Math.round(Number(seconds) || 0));
     return Math.floor(total / 60) + ':' + String(total % 60).padStart(2, '0');
+  }
+
+  function scheduleChatRender() {
+    if (chatRenderTimer) return;
+    chatRenderTimer = setTimeout(function () {
+      chatRenderTimer = null;
+      renderChat();
+    }, 30);
   }
 
   function renderChat() {
@@ -3826,13 +4132,24 @@
         if (payload.text) bubble.appendChild(el('span', 'message-text', payload.text));
       }
 
-      bubble.appendChild(
-        el(
-          'span',
-          'message-meta',
-          (mine ? 'você' : peerLabel(state.peer)) + ' · ' + formatTime(block.created_at)
-        )
+      var meta = el(
+        'span',
+        'message-meta',
+        (mine ? 'você' : peerLabel(state.peer)) + ' · ' + formatTime(block.created_at)
       );
+
+      if (mine) {
+        var read = peerHasRead(state.peer, logicalId(block));
+        meta.appendChild(
+          el(
+            'span',
+            'message-status' + (read ? ' is-read' : ''),
+            ' · ' + (read ? 'visualizado' : 'enviado')
+          )
+        );
+      }
+
+      bubble.appendChild(meta);
       list.appendChild(bubble);
     });
 
@@ -3888,11 +4205,47 @@
     renderChat();
   }
 
+  async function ingestMessageForOpenChat(block) {
+    if (!block || block.mode !== 'message' || block.app !== APP || !state.peer) return;
+    if (!state.identity) return;
+
+    var me = state.identity.publicKey;
+    var from = queryValue(block, 'from');
+    var to = queryValue(block, 'to');
+    var peer = sameKey(from, me) ? to : sameKey(to, me) ? from : null;
+    if (!peer || !sameKey(peer, state.peer)) return;
+
+    var key = logicalId(block);
+    if (!key || state.chat.has(key) || state.chatPending.has(key)) return;
+
+    state.chatPending.add(key);
+    var text = null;
+    try {
+      text = await onpostt.decryptMessage(state.identity.privateKey, block);
+    } catch (error) {
+      text = null;
+    }
+
+    if (!sameKey(state.peer, peer)) {
+      state.chatPending.delete(key);
+      return;
+    }
+
+    state.chat.set(key, {
+      block: block,
+      text: text,
+      payload: text === null ? null : messagePayload(text),
+    });
+    state.chatPending.delete(key);
+    scheduleChatRender();
+  }
+
   async function loadConversation(peer) {
     var me = state.identity.publicKey;
     var filters = [
       { mode: 'message', app: APP, query: [['from', peer], ['to', me]], limit: 200 },
       { mode: 'message', app: APP, query: [['from', me], ['to', peer]], limit: 200 },
+      { mode: 'message_read', app: APP, pubkey: peer, limit: MAX_MESSAGE_READS },
     ];
 
     var results = await Promise.all(
@@ -3903,26 +4256,25 @@
 
     await consumeMessages(results[0], peer);
     await consumeMessages(results[1], peer);
+
+    if (state.peer && sameKey(state.peer, peer) && mergePeerReads(peer, results[2])) {
+      renderChat();
+    }
   }
 
   function subscribeConversation(peer) {
-    var me = state.identity.publicKey;
-
-    var first = onpostt.sub(
-      { mode: 'message', app: APP, query: [['from', peer], ['to', me]], limit: 200 },
+    // As mensagens em si chegam pela assinatura global de `subscribeInbox`.
+    // Mantemos apenas uma assinatura para os recibos de leitura da conversa
+    // aberta, evitando três assinaturas por contato.
+    var readReceipt = onpostt.sub(
+      { mode: 'message_read', app: APP, pubkey: peer, limit: 1 },
       function (event) {
-        consumeMessages(event.blocks, peer);
+        if (!state.peer || !sameKey(state.peer, peer)) return;
+        if (mergePeerReads(peer, event.blocks)) renderChat();
       }
     );
 
-    var second = onpostt.sub(
-      { mode: 'message', app: APP, query: [['from', me], ['to', peer]], limit: 200 },
-      function (event) {
-        consumeMessages(event.blocks, peer);
-      }
-    );
-
-    state.chatUnsubs.push(first, second);
+    state.chatUnsubs.push(readReceipt);
   }
 
   function setNewChatFormOpen(open) {
@@ -3989,6 +4341,7 @@
 
     try {
       await loadConversation(peer);
+      if (!sameKey(state.peer, peer)) return;
       subscribeConversation(peer);
     } catch (error) {
       reportError(error.message);
@@ -4099,13 +4452,20 @@
   }
 
   async function handleChatImage(file) {
+    var picker = byId('chat-image');
+
     if (!state.peer) {
+      if (picker) picker.value = '';
       toast('Abra uma conversa antes de enviar uma imagem.', true);
       return;
     }
-    if (!file || state.chatMediaBusy || state.audioRecording) return;
+    if (!file || state.chatMediaBusy || state.audioRecording) {
+      if (picker) picker.value = '';
+      return;
+    }
 
     var input = byId('chat-input');
+    var peer = state.peer;
     var caption = input ? input.value.trim() : '';
 
     state.chatMediaBusy = true;
@@ -4131,7 +4491,7 @@
         },
       });
 
-      if (input) input.value = '';
+      if (input && sameKey(state.peer, peer)) input.value = '';
       toast('Imagem enviada.');
     } catch (error) {
       reportError(error.message);
@@ -4139,7 +4499,6 @@
       state.chatMediaBusy = false;
       updateChatHeader();
       setChatHint('');
-      var picker = byId('chat-image');
       if (picker) picker.value = '';
     }
   }
@@ -4335,6 +4694,7 @@
     event.preventDefault();
     if (!state.peer) return;
 
+    var peer = state.peer;
     var input = byId('chat-input');
     var button = byId('chat-send');
     var content = input ? input.value.trim() : '';
@@ -4343,7 +4703,7 @@
     setBusy(button, true);
     try {
       await sendMessageContent(content);
-      if (input) input.value = '';
+      if (input && sameKey(state.peer, peer)) input.value = '';
     } catch (error) {
       reportError(error.message);
     } finally {
@@ -4675,11 +5035,181 @@
     );
   }
 
+  function normalizeCommentList(blocks) {
+    var map = new Map();
+    (blocks || []).forEach(function (comment) {
+      if (!comment || comment.mode !== 'comment' || typeof comment.id !== 'string') return;
+      map.set(comment.id, comment);
+    });
+
+    var list = Array.from(map.values()).sort(function (a, b) {
+      var left = Number(a.created_at) || 0;
+      var right = Number(b.created_at) || 0;
+      if (left !== right) return left - right;
+      return String(a.id).localeCompare(String(b.id));
+    });
+
+    return list.length > MAX_COMMENTS_PER_POST ? list.slice(-MAX_COMMENTS_PER_POST) : list;
+  }
+
+  function commentSocialFor(blockId) {
+    var social = findKnownBlock(blockId);
+    if (social && (social.mode === 'post' || social.mode === 'repost')) return social;
+    if (state.detail && state.detail.targetId === blockId) {
+      return state.detail.repost || state.detail.post;
+    }
+    return null;
+  }
+
+  function updateCommentButton(article, blockId) {
+    if (!article) return;
+    var button = article.querySelector('[data-action="comment"]');
+    if (!button) return;
+    var count = (state.comments.get(blockId) || []).length;
+    var loading = state.commentLoading.has(blockId);
+    button.textContent =
+      'Comentar' +
+      (loading && count === 0 ? '…' : count ? ' (' + count + ')' : '');
+  }
+
+  /**
+   * Atualiza somente a superfície de comentários de um bloco. Evita
+   * re-renderizar o feed inteiro quando chega um comentário em tempo real.
+   */
+  function updateCommentSurface(blockId, preserveForm) {
+    if (!blockId) return;
+    var social = commentSocialFor(blockId);
+    var comments = state.comments.get(blockId) || [];
+    var articles = document.querySelectorAll('.post[data-social="' + blockId + '"]');
+
+    articles.forEach(function (article) {
+      var existing = article.querySelector('.comment-box');
+      if (state.openComments.has(blockId)) {
+        var box = renderComments(social || { id: blockId }, comments);
+        var oldList = preserveForm && existing ? existing.querySelector('.comment-list') : null;
+        var newList = box.querySelector('.comment-list');
+
+        if (existing && existing.parentNode && oldList && newList) {
+          // Atualização em tempo real: troca só a lista, preservando o texto
+          // que o usuário está digitando e o foco do formulário.
+          existing.replaceChild(newList, oldList);
+        } else if (existing && existing.parentNode) {
+          existing.parentNode.replaceChild(box, existing);
+        } else {
+          article.appendChild(box);
+        }
+      } else if (existing && existing.parentNode) {
+        existing.parentNode.removeChild(existing);
+      }
+      updateCommentButton(article, blockId);
+    });
+  }
+
+  function scheduleCommentSurfaceUpdate(blockId) {
+    if (!blockId) return;
+    commentSurfacePending.add(blockId);
+    if (commentSurfaceTimer) return;
+
+    commentSurfaceTimer = setTimeout(function () {
+      commentSurfaceTimer = null;
+      var pending = Array.from(commentSurfacePending);
+      commentSurfacePending.clear();
+      pending.forEach(function (pendingId) {
+        updateCommentSurface(pendingId, true);
+      });
+    }, COMMENT_RENDER_DELAY_MS);
+  }
+
+  function stopCommentSubscription(blockId) {
+    var unsubscribe = state.commentSubscriptions.get(blockId);
+    if (typeof unsubscribe !== 'function') {
+      state.commentSubscriptions.delete(blockId);
+      return;
+    }
+    state.commentSubscriptions.delete(blockId);
+    try {
+      unsubscribe();
+    } catch (error) {
+      /* a assinatura pode já ter sido encerrada pelo relay */
+    }
+  }
+
+  function ensureCommentSubscription(blockId) {
+    if (!blockId || state.commentSubscriptions.has(blockId)) return;
+    if (!state.openComments.has(blockId)) return;
+
+    var comments = state.comments.get(blockId) || [];
+    var latest = comments.reduce(function (max, comment) {
+      return Math.max(max, Number(comment && comment.created_at) || 0);
+    }, 0);
+
+    var filter = {
+      mode: 'comment',
+      app: APP,
+      query: [['block', blockId]],
+      limit: MAX_COMMENTS_PER_POST,
+    };
+    // O histórico já foi carregado por `list`. Recuamos um segundo para não
+    // perder comentários criados no mesmo instante do mais recente; a
+    // deduplicação por id absorve a pequena sobreposição.
+    if (latest > 0) filter.since = Math.max(0, latest - 1);
+
+    var unsubscribe = onpostt.sub(filter, function (event) {
+      if (!state.openComments.has(blockId)) return;
+      mergeLiveComments(blockId, event.blocks);
+    });
+
+    if (typeof unsubscribe === 'function') {
+      state.commentSubscriptions.set(blockId, unsubscribe);
+    }
+  }
+
+  function mergeLiveComments(blockId, blocks) {
+    var incoming = (blocks || []).filter(function (comment) {
+      if (!comment || comment.mode !== 'comment' || typeof comment.id !== 'string') return false;
+      var target = queryValue(comment, 'block');
+      return (
+        typeof target === 'string' &&
+        target.toLowerCase() === String(blockId).toLowerCase()
+      );
+    });
+    if (incoming.length === 0) return;
+
+    var byId = new Map();
+    (state.comments.get(blockId) || []).forEach(function (comment) {
+      if (comment && comment.id) byId.set(comment.id, comment);
+    });
+
+    var added = false;
+    var authors = [];
+    incoming.forEach(function (comment) {
+      if (byId.has(comment.id)) return;
+      byId.set(comment.id, comment);
+      added = true;
+      if (comment.pubkey) authors.push(comment.pubkey);
+    });
+    if (!added) return;
+
+    state.comments.set(blockId, normalizeCommentList(Array.from(byId.values())));
+    state.commentLoaded.add(blockId);
+
+    if (state.openComments.has(blockId)) scheduleCommentSurfaceUpdate(blockId);
+    if (authors.length > 0) {
+      loadProfilesForKeys(authors)
+        .then(function () {
+          if (state.openComments.has(blockId)) scheduleCommentSurfaceUpdate(blockId);
+        })
+        .catch(function () {
+          /* o comentário usa as iniciais da pubkey */
+        });
+    }
+  }
+
   async function loadCommentsFor(blockId) {
     if (!blockId || state.commentLoading.has(blockId)) return;
     state.commentLoading.add(blockId);
     state.commentLoaded.delete(blockId);
-    if (state.openComments.has(blockId)) renderPostSurfaces();
+    if (state.openComments.has(blockId)) updateCommentSurface(blockId);
 
     try {
       var comments = await onpostt.list({
@@ -4688,9 +5218,11 @@
         query: [['block', blockId]],
         limit: MAX_COMMENTS_PER_POST,
       });
-      var list = comments.filter(function (comment) {
-        return comment && comment.mode === 'comment';
-      });
+      var list = normalizeCommentList(
+        comments.filter(function (comment) {
+          return comment && comment.mode === 'comment';
+        })
+      );
       state.comments.set(blockId, list);
       state.commentLoaded.add(blockId);
       await refreshCommenterProfiles();
@@ -4698,7 +5230,10 @@
       reportError(error.message);
     } finally {
       state.commentLoading.delete(blockId);
-      renderPostSurfaces();
+      if (state.openComments.has(blockId)) {
+        updateCommentSurface(blockId);
+        ensureCommentSubscription(blockId);
+      }
     }
   }
 
@@ -4810,25 +5345,21 @@
   }
 
   function subscribeLive() {
-    var filters = [
-      { mode: 'post' },
-      { mode: 'profile' },
-      { mode: 'like' },
-      { mode: 'reaction' },
-      { mode: 'comment' },
-      { mode: 'repost' },
-      { mode: 'follow' },
-      { mode: 'block' },
-      { mode: 'delete' },
-    ];
-
-    filters.forEach(function (filter) {
-      filter.app = APP;
-      filter.limit = 1;
-      onpostt.sub(filter, function () {
-        scheduleRefresh();
-      });
-    });
+    // O feed e os comentários não têm mais assinatura em tempo real. Eles só
+    // são atualizados em uma carga manual da página ou pelo botão Atualizar.
+    // Isso evita que uma enxurrada de posts/comentários re-renderize o feed.
+    //
+    // Notificações continuam chegando, mas atualizam somente a lista de
+    // notificações; não chamam refreshAll() nem recarregam posts/comentários.
+    function refreshNotificationsSoon() {
+      if (notificationRefreshTimer) clearTimeout(notificationRefreshTimer);
+      notificationRefreshTimer = setTimeout(function () {
+        notificationRefreshTimer = null;
+        refreshNotifications().catch(function (error) {
+          reportError(error.message);
+        });
+      }, 1000);
+    }
 
     // Notificações são assinadas por outros usuários. A assinatura fica
     // restrita ao destinatário atual para não baixar notificações de terceiros.
@@ -4839,9 +5370,7 @@
         query: [['to', state.identity.publicKey]],
         limit: 1,
       },
-      function () {
-        scheduleRefresh();
-      }
+      refreshNotificationsSoon
     );
 
     onpostt.sub(
@@ -4851,9 +5380,7 @@
         pubkey: state.identity.publicKey,
         limit: 1,
       },
-      function () {
-        scheduleRefresh();
-      }
+      refreshNotificationsSoon
     );
   }
 
@@ -4905,13 +5432,21 @@
 
   function openIdentityDialog() {
     var dialog = byId('key-dialog');
-    if (!dialog) return;
-    byId('key-public').value = state.identity.publicKey;
-    byId('key-private').value = state.identity.privateKey;
+    if (!dialog || !state.identity) return;
+
+    var publicField = byId('key-public');
+    var privateField = byId('key-private');
+    if (publicField) publicField.value = state.identity.publicKey;
+    if (privateField) privateField.value = state.identity.privateKey;
+
     var password = byId('export-password');
     if (password) password.value = '';
-    if (typeof dialog.showModal === 'function') dialog.showModal();
-    else dialog.setAttribute('open', 'open');
+
+    if (typeof dialog.showModal === 'function') {
+      if (!dialog.open) dialog.showModal();
+    } else {
+      dialog.setAttribute('open', 'open');
+    }
   }
 
   async function copyText(text) {
@@ -5146,7 +5681,7 @@
       var button = byId('publish-button');
       setBusy(button, true);
       try {
-        await publish({
+        var output = await publish({
           mode: 'post',
           query: [],
           content: content,
@@ -5166,7 +5701,22 @@
         }
         clearPendingImage();
         state.trendingFetchedAt = 0;
-        await refreshAll();
+
+        // Insere apenas o post recém-publicado. Não recarrega o feed inteiro,
+        // para não trazer publicações de outras pessoas sem uma atualização.
+        var published = output && output.block;
+        if (published && published.mode === 'post') {
+          var alreadyListed = state.posts.some(function (post) {
+            return post && post.id === published.id;
+          });
+          state.posts = state.posts.filter(function (post) {
+            return post && post.id !== published.id;
+          });
+          state.posts.unshift(published);
+          if (!alreadyListed) state.feedOffset += 1;
+          renderPostSurfaces();
+        }
+
         toast('Post publicado.');
       } catch (error) {
         reportError(error.message);
@@ -5495,9 +6045,8 @@
       );
     });
 
-    document.addEventListener('visibilitychange', function () {
-      if (!document.hidden && state.ready) scheduleRefresh();
-    });
+    // Voltar para a aba não atualiza o feed sozinho. A atualização acontece
+    // só na carga da página ou pelo botão "Atualizar".
   }
 
   async function reconnectRelays() {
@@ -5527,7 +6076,13 @@
       if (RELAY && typeof RELAY.setHostStatus === 'function' && event && event.url) {
         RELAY.setHostStatus(event.url, false);
       }
-      if (!onpostt.isConnected) setNet('warn', 'offline');
+      clearPresenceSource(event && event.url);
+      if (!onpostt.isConnected) {
+        setNet('warn', 'offline');
+        // Sem conexão não há como saber quem está online. Esconde os
+        // indicadores em vez de exibir um status possivelmente falso.
+        clearPresenceState();
+      }
     });
 
     onpostt.on('reconnect', function (event) {
@@ -5539,6 +6094,20 @@
 
     onpostt.on('hello', function () {
       setNet('ok', 'online');
+
+      // Em uma reconexão, a assinatura global pode ter perdido mensagens
+      // acima do pequeno lote inicial. Recarrega uma vez a conversa aberta
+      // para garantir consistência sem criar assinaturas por contato.
+      if (!state.ready || !state.connectedOnce || !state.peer) return;
+      var peer = state.peer;
+      if (chatReconnectTimer) clearTimeout(chatReconnectTimer);
+      chatReconnectTimer = setTimeout(function () {
+        chatReconnectTimer = null;
+        if (!state.peer || !sameKey(state.peer, peer)) return;
+        loadConversation(peer).catch(function (error) {
+          reportError(error.message);
+        });
+      }, 400);
     });
 
     onpostt.on('error', function (event) {
@@ -5627,9 +6196,14 @@
       reportError(error.message);
     }
 
+    // A partir daqui, um novo `hello` representa reconexão/novo relay, não a
+    // conexão inicial que acabou de acontecer.
+    state.connectedOnce = true;
+
     await refreshAll();
     if (!MESSAGES_PAGE) subscribeLive();
     subscribeInbox();
+    if (MESSAGES_PAGE) startPresence();
     state.ready = true;
 
     if (POST_PAGE) {

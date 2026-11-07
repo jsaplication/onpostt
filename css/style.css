@@ -9,7 +9,7 @@
 }
 
 .demo-nav {
-  margin-left: 0.5rem;
+  margin-left: auto;
 }
 
 .nav-button {
@@ -1392,6 +1392,53 @@ button.topic-chip:focus-visible {
   overflow: auto;
 }
 
+.contact-avatar {
+  position: relative;
+  display: inline-flex;
+  flex: 0 0 auto;
+}
+
+.presence-dot {
+  display: inline-block;
+  width: 9px;
+  height: 9px;
+  flex: 0 0 auto;
+  border-radius: 50%;
+  background: #8a8398;
+  box-shadow: 0 0 0 2px var(--panel);
+  pointer-events: none;
+}
+
+.contact-avatar > .presence-dot {
+  position: absolute;
+  right: -1px;
+  bottom: -1px;
+}
+
+.presence-dot.is-online,
+.presence-line.is-online .presence-dot {
+  background: #3ddc84;
+}
+
+.presence-dot.is-offline,
+.presence-line.is-offline .presence-dot {
+  background: #8a8398;
+}
+
+.presence-line {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.35rem;
+  margin-top: 0.28rem;
+  color: var(--muted);
+  font-size: 0.72rem;
+  line-height: 1;
+}
+
+.presence-line[hidden] {
+  display: none;
+}
+
 .contact-button {
   display: flex;
   align-items: center;
@@ -1514,6 +1561,15 @@ button.topic-chip:focus-visible {
   color: var(--faint);
   font-family: var(--mono);
   font-size: 0.68rem;
+}
+
+.message-status {
+  color: var(--faint);
+}
+
+.message-status.is-read {
+  color: var(--accent);
+  font-weight: 700;
 }
 
 .chat-form {
@@ -1789,6 +1845,7 @@ button.topic-chip:focus-visible {
     width: 100%;
     margin: 0;
     padding-bottom: 0.3rem;
+    
   }
 
   .demo-identity {
@@ -1987,4 +2044,222 @@ body.image-modal-open {
   border-color: rgba(255, 255, 255, 0.65);
   background: rgba(255, 255, 255, 0.16);
   outline: none;
+}
+
+/* Verificador de assinatura (js/signature-inspector.js) */
+.signature-button {
+  margin-left: auto;
+  color: var(--faint);
+  font-size: 0.74rem;
+  font-weight: 500;
+}
+
+.signature-button-mark {
+  display: inline-grid;
+  place-items: center;
+  width: 14px;
+  height: 14px;
+  margin-right: 0.25rem;
+  border: 1px solid currentColor;
+  border-radius: 50%;
+  font-size: 0.58rem;
+  line-height: 1;
+  vertical-align: -1px;
+}
+
+.signature-button:hover {
+  color: var(--accent);
+}
+
+body.signature-dialog-open {
+  overflow: hidden;
+}
+
+.signature-dialog {
+  width: min(760px, calc(100vw - 2rem));
+  max-height: calc(100vh - 2rem);
+  margin: auto;
+  padding: 0;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: var(--panel);
+  color: var(--text);
+  box-shadow: var(--shadow);
+  overflow: hidden;
+}
+
+.signature-dialog::backdrop {
+  background: rgba(0, 0, 0, 0.68);
+  backdrop-filter: blur(3px);
+}
+
+.signature-dialog-body {
+  display: grid;
+  gap: 0.9rem;
+  max-height: calc(100vh - 2rem);
+  padding: 1.2rem;
+  overflow: auto;
+}
+
+.signature-head {
+  display: flex;
+  align-items: flex-start;
+  gap: 1rem;
+}
+
+.signature-heading {
+  min-width: 0;
+}
+
+.signature-eyebrow {
+  color: var(--accent);
+  font-size: 0.68rem;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+.signature-head h2 {
+  margin: 0.18rem 0 0;
+  font-size: 1.2rem;
+}
+
+.signature-close {
+  flex: 0 0 auto;
+  display: grid;
+  place-items: center;
+  width: 36px;
+  height: 36px;
+  margin-left: auto;
+  padding: 0;
+  border: 1px solid var(--border);
+  border-radius: 50%;
+  background: var(--panel-2);
+  color: var(--text);
+  font: inherit;
+  font-size: 1.35rem;
+  line-height: 1;
+  cursor: pointer;
+}
+
+.signature-close:hover,
+.signature-close:focus-visible {
+  border-color: var(--accent);
+  outline: none;
+}
+
+.signature-status,
+.signature-id-status {
+  margin: 0;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  padding: 0.55rem 0.7rem;
+  font-size: 0.84rem;
+  line-height: 1.4;
+}
+
+.signature-id-status {
+  margin-top: -0.3rem;
+  color: var(--muted);
+  font-size: 0.76rem;
+}
+
+.signature-status.is-pending,
+.signature-id-status.is-pending {
+  border-color: rgba(181, 140, 255, 0.32);
+  background: rgba(181, 140, 255, 0.08);
+  color: var(--muted);
+}
+
+.signature-status.is-valid,
+.signature-id-status.is-valid {
+  border-color: rgba(106, 220, 155, 0.36);
+  background: rgba(106, 220, 155, 0.08);
+  color: #c9f7dd;
+}
+
+.signature-status.is-invalid,
+.signature-id-status.is-invalid {
+  border-color: rgba(255, 123, 143, 0.4);
+  background: rgba(255, 123, 143, 0.09);
+  color: #ffd2d2;
+}
+
+.signature-status.is-unavailable,
+.signature-id-status.is-unavailable {
+  color: var(--faint);
+}
+
+.signature-meta {
+  display: grid;
+  gap: 0.55rem;
+  margin: 0;
+}
+
+.signature-meta div {
+  min-width: 0;
+}
+
+.signature-meta dt {
+  color: var(--faint);
+  font-size: 0.68rem;
+  font-weight: 700;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+}
+
+.signature-meta dd {
+  margin: 0.12rem 0 0;
+  color: var(--muted);
+  font-size: 0.74rem;
+  overflow-wrap: anywhere;
+}
+
+.signature-section h3 {
+  margin: 0 0 0.4rem;
+  color: var(--muted);
+  font-size: 0.78rem;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+}
+
+.signature-code {
+  max-height: 250px;
+  margin: 0;
+  padding: 0.75rem;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  background: var(--panel-2);
+  color: var(--text);
+  font-family: var(--mono);
+  font-size: 0.72rem;
+  line-height: 1.45;
+  overflow: auto;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+.signature-code-signature {
+  max-height: 120px;
+}
+
+.signature-note {
+  margin: 0;
+}
+
+@media (max-width: 560px) {
+  .signature-dialog {
+    width: calc(100vw - 1rem);
+    max-height: calc(100vh - 1rem);
+  }
+
+  .signature-dialog-body {
+    max-height: calc(100vh - 1rem);
+    padding: 0.9rem;
+  }
+
+  .signature-button {
+    margin-left: 0;
+  }
 }
