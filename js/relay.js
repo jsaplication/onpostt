@@ -21,7 +21,7 @@
 
   var RELAYS = [
     'https://onpostt-relay1.onrender.com',
-    'http://localhost:3000',
+    //'http://localhost:3000',
   ];
 
   var STORAGE_KEY = 'onpostt.demo.relays';
