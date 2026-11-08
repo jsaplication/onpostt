@@ -311,18 +311,28 @@
       }
     });
 
-    var netStatus = byId('net-status');
-    if (netStatus) {
+    // Em post.html/messages.html o header é injetado depois deste script.
+    // Decora o status quando ele aparecer e usa delegação para o teclado.
+    function decorateNetStatus() {
+      var netStatus = byId('net-status');
+      if (!netStatus) return false;
       netStatus.setAttribute('role', 'button');
       netStatus.setAttribute('tabindex', '0');
       netStatus.setAttribute('aria-haspopup', 'dialog');
       netStatus.title = 'Gerenciar relays';
-      netStatus.addEventListener('keydown', function (event) {
-        if (event.key === 'Enter' || event.key === ' ') {
-          event.preventDefault();
-          openDialog(dialog);
-        }
-      });
+      return true;
+    }
+
+    document.addEventListener('keydown', function (event) {
+      if (event.key !== 'Enter' && event.key !== ' ') return;
+      var target = event.target;
+      if (!target || !target.closest || !target.closest('#net-status')) return;
+      event.preventDefault();
+      openDialog(dialog);
+    });
+
+    if (!decorateNetStatus()) {
+      global.addEventListener('onpostt:app-ready', decorateNetStatus);
     }
   }
 

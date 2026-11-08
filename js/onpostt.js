@@ -1093,8 +1093,11 @@
       this.hosts = hosts;
       this._shouldReconnect = true;
 
-      // Fecha conexões antigas, mas mantém assinaturas ativas.
+      // Fecha conexões antigas, mas mantém assinaturas ativas. Marcar a
+      // entrada como substituída impede que o `close` assíncrono da conexão
+      // antiga agende uma reconexão paralela para o mesmo relay.
       this._connections.forEach(function (entry) {
+        entry.replaced = true;
         if (entry.timer) clearTimeout(entry.timer);
         try {
           entry.ws.close(1000, 'Reconectando');
@@ -1148,6 +1151,7 @@
     disconnect: function () {
       this._shouldReconnect = false;
       this._connections.forEach(function (entry) {
+        entry.replaced = true;
         if (entry.timer) clearTimeout(entry.timer);
         try {
           entry.ws.close(1000, 'Cliente desconectou');
@@ -1173,7 +1177,9 @@
       }
 
       var self = this;
-      var entry = { url: url, ws: null, attempts: 0, timer: null };
+      var entry = { url: url, ws: null, attempts: 0, timer: null, replaced: false };
+      var previous = this._connections.get(url);
+      if (previous && previous !== entry) previous.replaced = true;
       this._connections.set(url, entry);
 
       var ws;
@@ -1218,14 +1224,14 @@
           code: event && event.code,
           reason: event && event.reason,
         });
-        if (self._shouldReconnect) self._scheduleReconnect(url);
+        if (self._shouldReconnect && !entry.replaced) self._scheduleReconnect(url);
       };
     },
 
     _scheduleReconnect: function (url) {
       if (!this._shouldReconnect) return;
       var entry = this._connections.get(url);
-      if (!entry || entry.timer) return;
+      if (!entry || entry.replaced || entry.timer) return;
 
       entry.attempts += 1;
       var delay = Math.min(30000, 1000 * Math.pow(2, Math.min(entry.attempts, 5)));
@@ -1234,7 +1240,7 @@
       var self = this;
       entry.timer = setTimeout(function () {
         entry.timer = null;
-        if (self._shouldReconnect) self._createSocket(url);
+        if (self._shouldReconnect && !entry.replaced) self._createSocket(url);
       }, delay);
       this.emit('reconnect', { url: url, delay: delay });
     },

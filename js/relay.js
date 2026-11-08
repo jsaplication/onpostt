@@ -21,13 +21,16 @@
 
   var RELAYS = [
     'https://onpostt-relay1.onrender.com',
-    //'http://localhost:3000',
+    'http://localhost:3000',
   ];
 
   var STORAGE_KEY = 'onpostt.demo.relays';
   var FETCH_TIMEOUT_MS = 15000;
   var PROBE_TIMEOUT_MS = 4000;
+  var PROBE_RETRY_TIMEOUT_MS = 15000;
+  var PROBE_RETRY_DELAY_MS = 1200;
   var SAVE_TIMEOUT_MS = 15000;
+  var probeRetryPending = new Set();
 
   // Interações só podem ser gravadas em relays que já possuem o bloco alvo.
   // Sem esse roteamento o relay recebe referências para blocos inexistentes.
@@ -240,6 +243,50 @@
       });
   }
 
+  function applyReachableHosts() {
+    var reachable = hosts.filter(function (host) {
+      return statusByHost[host] === 'online';
+    });
+    var changed = reachable.join('|') !== activeHosts.join('|');
+    // Se nada respondeu, mantém a lista configurada para que o app ainda
+    // tente conectar (e mostre o erro real em vez de ficar sem hosts).
+    activeHosts = reachable.length ? reachable : hosts.slice();
+
+    emit('onpostt:relays-status', { relays: getStatus(), active: activeHosts.slice() });
+    if (changed) emit('onpostt:relays-changed', { relays: hosts.slice(), active: activeHosts.slice() });
+    return activeHosts.slice();
+  }
+
+  /**
+   * Relays gratuitos (ex.: Render) podem levar mais que os 4 s do probe
+   * inicial para acordar. Tentamos uma vez mais em segundo plano para não
+   * deixar um relay saudável fora da conexão até o usuário recarregar a página.
+   */
+  function scheduleProbeRetry(failedHosts) {
+    failedHosts.forEach(function (host) {
+      if (probeRetryPending.has(host)) return;
+      probeRetryPending.add(host);
+
+      setTimeout(function () {
+        if (hosts.indexOf(host) === -1) {
+          probeRetryPending.delete(host);
+          return;
+        }
+
+        probeHost(host, PROBE_RETRY_TIMEOUT_MS).then(function (online) {
+          probeRetryPending.delete(host);
+          if (hosts.indexOf(host) === -1) return;
+          if (!online) {
+            setStatus(host, 'offline');
+            return;
+          }
+          setStatus(host, 'online');
+          applyReachableHosts();
+        });
+      }, PROBE_RETRY_DELAY_MS);
+    });
+  }
+
   async function probe(timeoutMs) {
     var limit = timeoutMs || PROBE_TIMEOUT_MS;
     var results = await Promise.all(
@@ -250,22 +297,17 @@
       })
     );
 
-    var reachable = results
-      .filter(function (result) {
-        return result.online;
-      })
-      .map(function (result) {
-        return result.host;
-      });
+    scheduleProbeRetry(
+      results
+        .filter(function (result) {
+          return !result.online;
+        })
+        .map(function (result) {
+          return result.host;
+        })
+    );
 
-    var changed = reachable.join('|') !== activeHosts.join('|');
-    // Se nada respondeu, mantém a lista configurada para que o app ainda
-    // tente conectar (e mostre o erro real em vez de ficar sem hosts).
-    activeHosts = reachable.length ? reachable : hosts.slice();
-
-    emit('onpostt:relays-status', { relays: getStatus(), active: activeHosts.slice() });
-    if (changed) emit('onpostt:relays-changed', { relays: hosts.slice(), active: activeHosts.slice() });
-    return activeHosts.slice();
+    return applyReachableHosts();
   }
 
   function connectOptions() {

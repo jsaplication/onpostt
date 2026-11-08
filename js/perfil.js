@@ -30,6 +30,8 @@
     posts: [],
     likes: new Map(),
     comments: new Map(),
+    commentLoading: new Set(),
+    profileLookups: new Set(),
     reactions: new Map(),
     reposts: new Map(),
     repostBlocks: [],
@@ -570,7 +572,15 @@
     });
 
     if (sorted.length === 0) {
-      list.appendChild(el('p', 'faint small mb-0', 'Nenhum comentário ainda.'));
+      list.appendChild(
+        el(
+          'p',
+          'faint small mb-0',
+          state.commentLoading.has(post.id)
+            ? 'Carregando comentários…'
+            : 'Nenhum comentário ainda.'
+        )
+      );
     } else {
       var ids = new Set(
         sorted
@@ -1087,11 +1097,9 @@
     if (statPosts) statPosts.textContent = String(state.posts.length) + (state.posts.length >= MAX_POSTS ? '+' : '');
     var statReposts = byId('stat-reposts');
     if (statReposts) {
-      statReposts.textContent = String(
-        state.posts.reduce(function (total, post) {
-          return total + (state.reposts.get(post.id) || 0);
-        }, 0)
-      );
+      var ownReposts = state.repostBlocks.length;
+      statReposts.textContent =
+        String(ownReposts) + (ownReposts >= MAX_REPOSTS ? '+' : '');
     }
     var statFollowers = byId('stat-followers');
     if (statFollowers) statFollowers.textContent = String(state.followers);
@@ -1414,10 +1422,45 @@
     }
   }
 
+  async function loadProfileComments(blockId) {
+    if (!blockId || state.commentLoading.has(blockId)) return;
+    state.commentLoading.add(blockId);
+
+    try {
+      var comments = await window.onpostt.list({
+        mode: 'comment',
+        app: APP,
+        query: [['block', blockId]],
+        limit: MAX_SOCIAL,
+      });
+
+      // Substitui o índice global por uma leitura exata da thread. Assim
+      // exclusões e comentários novos aparecem ao reabrir a conversa.
+      state.comments.set(
+        blockId,
+        (comments || []).filter(function (comment) {
+          return comment && comment.mode === 'comment';
+        })
+      );
+      await loadCommenterProfiles();
+    } catch (error) {
+      reportError(error.message);
+    } finally {
+      state.commentLoading.delete(blockId);
+      if (state.openComments.has(blockId)) renderProfile();
+    }
+  }
+
   function handleCommentToggle(blockId) {
-    if (state.openComments.has(blockId)) state.openComments.delete(blockId);
-    else state.openComments.add(blockId);
+    if (state.openComments.has(blockId)) {
+      state.openComments.delete(blockId);
+      renderProfile();
+      return;
+    }
+
+    state.openComments.add(blockId);
     renderProfile();
+    loadProfileComments(blockId);
   }
 
   function handleReply(blockId, commentId) {
@@ -1518,7 +1561,9 @@
       });
       state.openComments.delete(blockId);
       state.commentDrafts.delete(blockId);
+      state.commentLoading.delete(blockId);
       state.replyTo.delete(blockId);
+      state.comments.delete(blockId);
       renderProfile();
     } catch (error) {
       reportError(error.message);
@@ -1609,6 +1654,7 @@
         return (
           candidate &&
           !state.profiles.has(candidate) &&
+          !state.profileLookups.has(candidate) &&
           window.onpostt.isValidPublicKey(candidate)
         );
       })
@@ -1616,6 +1662,7 @@
 
     await Promise.all(
       missing.map(function (candidate) {
+        state.profileLookups.add(candidate);
         return window.onpostt
           .list({ mode: 'profile', app: APP, pubkey: candidate, limit: 1 })
           .then(function (profiles) {
@@ -1623,6 +1670,9 @@
           })
           .catch(function () {
             /* perfil ausente: o comentário usa as iniciais da pubkey */
+          })
+          .then(function () {
+            state.profileLookups.delete(candidate);
           });
       })
     );
@@ -1686,9 +1736,15 @@
     state.repostPosts.forEach(collect);
     state.repostBlocks.forEach(collect);
 
-    var missing = Array.from(pubkeys).slice(0, MAX_PROFILE_LOOKUPS);
+    var missing = Array.from(pubkeys)
+      .filter(function (candidate) {
+        return !state.profileLookups.has(candidate);
+      })
+      .slice(0, MAX_PROFILE_LOOKUPS);
+
     await Promise.all(
       missing.map(function (candidate) {
+        state.profileLookups.add(candidate);
         return window.onpostt
           .list({ mode: 'profile', app: APP, pubkey: candidate, limit: 1 })
           .then(function (profiles) {
@@ -1696,6 +1752,9 @@
           })
           .catch(function () {
             /* autor sem perfil público: usa as iniciais da pubkey */
+          })
+          .then(function () {
+            state.profileLookups.delete(candidate);
           });
       })
     );

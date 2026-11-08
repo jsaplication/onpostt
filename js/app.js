@@ -55,6 +55,20 @@
   var MAX_PRESENCE_WATCH = 500;
   var COMMENT_RENDER_DELAY_MS = 80;
   var PRESENCE_SYNC_DELAY_MS = 200;
+
+  // Presença portátil para relays que ainda não anunciam a extensão
+  // `presence`. O relay antigo não conhece presença, mas aceita blocos
+  // assinados comuns. Publicamos um "beacon" (bloco delete minúsculo) em
+  // intervalos regulares e observamos os beacons dos contatos. O bloco delete
+  // aponta para uma âncora própria criada uma única vez por sessão; assim ele
+  // não interfere no feed nem apaga conteúdo real.
+  var PRESENCE_BEACON_PREFIX = 'onpostt-presence';
+  var PRESENCE_BEACON_ANCHOR_APP = 'onpostt-presence-anchor';
+  var PRESENCE_BEACON_SHARDS = 8;
+  var PRESENCE_BEACON_HEARTBEAT_MS = 45000;
+  var PRESENCE_BEACON_TTL_MS = 120000;
+  var PRESENCE_BEACON_SWEEP_MS = 10000;
+  var PRESENCE_BEACON_LIMIT = 200;
   var MAX_PROFILE_SUGGESTIONS = 24;
   var MAX_NEW_CHAT_PROFILE_LOOKUPS = 120;
   var PROFILE_SEARCH_PAGE = 100;
@@ -119,6 +133,8 @@
     chat: new Map(),
     chatPending: new Set(),
     chatUnsubs: [],
+    chatOpenSeq: 0,
+    chatOpeningPeer: '',
     inbox: new Map(),
     outbox: new Map(),
     hiddenChats: new Map(),
@@ -152,6 +168,11 @@
     presenceWatch: null,
     presenceWatchSignature: '',
     presenceWatched: new Set(),
+    presenceBeaconSeen: new Map(),
+    presenceBeaconSubs: new Map(),
+    presenceBeaconAnchor: null,
+    presenceBeaconStarted: false,
+    presenceBeaconBusy: false,
     detail: null,
     connectedOnce: false,
     ready: false,
@@ -170,6 +191,8 @@
   var commentSurfacePending = new Set();
   var chatRenderTimer = null;
   var chatReconnectTimer = null;
+  var presenceBeaconTimer = null;
+  var presenceBeaconSweepTimer = null;
   var linkPreviewCache = new Map();
   var errorTimes = new Map();
 
@@ -2440,6 +2463,18 @@
     }
   }
 
+  function clearCommentThreadState(blockId) {
+    if (!blockId) return;
+    state.openComments.delete(blockId);
+    state.commentLoaded.delete(blockId);
+    state.commentLoading.delete(blockId);
+    state.commentDrafts.delete(blockId);
+    state.replyTo.delete(blockId);
+    state.comments.delete(blockId);
+    stopCommentSubscription(blockId);
+    commentSurfacePending.delete(blockId);
+  }
+
   async function handleDelete(blockId) {
     var confirmed = window.confirm('Excluir este post? O bloco de exclusão é público.');
     if (!confirmed) return;
@@ -2450,21 +2485,37 @@
         query: [['block', blockId]],
         app: APP,
       });
+      var wasInFeed = state.posts.some(function (post) {
+        return post && post.id === blockId;
+      });
+      // Comentários de cartões de repost usam o id do repost, não o do post
+      // original. Ao excluir o post, essas threads também precisam sumir.
+      var removedRepostIds = state.repostBlocks
+        .filter(function (repost) {
+          return (
+            repost &&
+            repost.id &&
+            String(queryValue(repost, 'block') || '').toLowerCase() ===
+              String(blockId).toLowerCase()
+          );
+        })
+        .map(function (repost) {
+          return repost.id;
+        });
+
       state.posts = state.posts.filter(function (post) {
         return post.id !== blockId;
+      });
+      state.topicPosts = state.topicPosts.filter(function (post) {
+        return !post || post.id !== blockId;
       });
       state.repostPosts.delete(blockId);
       state.repostBlocks = state.repostBlocks.filter(function (block) {
         return queryValue(block, 'block') !== blockId;
       });
-      state.openComments.delete(blockId);
-      state.commentLoaded.delete(blockId);
-      state.commentLoading.delete(blockId);
-      state.commentDrafts.delete(blockId);
-      state.replyTo.delete(blockId);
-      state.comments.delete(blockId);
-      stopCommentSubscription(blockId);
-      commentSurfacePending.delete(blockId);
+      if (wasInFeed && state.feedOffset > 0) state.feedOffset -= 1;
+      removedRepostIds.forEach(clearCommentThreadState);
+      clearCommentThreadState(blockId);
       if (state.detail && state.detail.post && state.detail.post.id === blockId) {
         state.detail = null;
         if (POST_PAGE) {
@@ -3152,13 +3203,13 @@
   async function openNotification(notification) {
     if (!notification || !notification.id) return;
 
-    // Aguarda a confirmação de leitura antes de trocar de página. Sem isso,
-    // o redirecionamento podia cancelar a publicação e a notificação voltava
-    // como não lida ao retornar para a lista.
-    await markNotificationRead(notification.id);
+    // A confirmação de leitura é publicada em paralelo. Só esperamos por ela
+    // antes de redirecionar a página (o redirecionamento cancelaria o envio).
+    var readPromise = markNotificationRead(notification.id);
 
     var kind = queryValue(notification, 'kind');
     if (kind === 'follow') {
+      await readPromise;
       window.location.assign('/perfil.html?pubkey=' + encodeURIComponent(notification.pubkey));
       return;
     }
@@ -3180,34 +3231,35 @@
     }
 
     if (target.mode === 'repost') {
+      await readPromise;
       window.location.assign(postDetailUrl(queryValue(target, 'block'), target.id));
       return;
     }
 
+    // Em notificações de comentário, `block` aponta para o post e `interaction`
+    // para o comentário. O código antigo só olhava `block` e por isso acabava
+    // abrindo o feed sem a thread.
     var postId = target.mode === 'comment' ? queryValue(target, 'block') : target.id;
-    if (target.mode === 'comment') {
-      var parentBlock = findKnownBlock(postId);
-      if (!parentBlock) {
+    var commentBlock = target.mode === 'comment' ? target : null;
+    var interactionId = queryValue(notification, 'interaction');
+
+    if (!commentBlock && kind === 'comment' && interactionId) {
+      commentBlock = findKnownBlock(interactionId);
+      if (!commentBlock) {
         try {
-          parentBlock = await loadBlockById(postId);
+          commentBlock = await loadBlockById(interactionId);
         } catch (error) {
           reportError(error.message);
         }
       }
-      if (parentBlock && parentBlock.mode === 'repost') {
-        window.location.assign(postDetailUrl(queryValue(parentBlock, 'block'), parentBlock.id));
-        return;
-      }
-
-      if (!state.comments.has(postId)) state.comments.set(postId, []);
-      var comments = state.comments.get(postId);
-      if (!comments.some(function (comment) { return comment.id === target.id; })) {
-        comments.push(target);
-      }
     }
 
-    if (target.mode === 'post' && !state.posts.some(function (post) { return post.id === target.id; })) {
-      state.posts.unshift(target);
+    if (commentBlock && commentBlock.mode === 'comment') {
+      if (!state.comments.has(postId)) state.comments.set(postId, []);
+      var comments = state.comments.get(postId);
+      if (!comments.some(function (comment) { return comment.id === commentBlock.id; })) {
+        comments.push(commentBlock);
+      }
     }
 
     if (!state.posts.some(function (post) { return post.id === postId; })) {
@@ -3219,9 +3271,19 @@
       }
     }
 
-    if (target.mode === 'comment') state.openComments.add(postId);
+    var opensCommentThread = Boolean(commentBlock && commentBlock.mode === 'comment');
+    if (opensCommentThread) state.openComments.add(postId);
     switchView('feed');
     renderFeed();
+
+    if (opensCommentThread) {
+      // A notificação traz só o comentário que a disparou. Carrega o histórico
+      // completo e cria a assinatura da thread; sem isso o contador fica errado
+      // e o primeiro clique em "Comentar" fecharia a conversa recém-aberta.
+      loadCommentsFor(postId).catch(function (error) {
+        reportError(error.message);
+      });
+    }
 
     setTimeout(function () {
       var node = byId('feed-list').querySelector('.post[data-block="' + postId + '"]');
@@ -3385,12 +3447,13 @@
   function updateContactPresence(pubkey) {
     var key = normalizedPresenceKey(pubkey);
     if (!key) return;
-    document
-      .querySelectorAll('.contact-button[data-pubkey="' + key + '"]')
-      .forEach(function (button) {
-        var avatar = button.querySelector('.contact-avatar');
-        ensurePresenceDot(avatar || button, key);
-      });
+    // Comparar com sameKey em vez de um seletor de atributo: pubkeys podem
+    // aparecer em caixa alta em URLs antigas e o seletor é case-sensitive.
+    document.querySelectorAll('.contact-button').forEach(function (button) {
+      if (!sameKey(button.dataset.pubkey, key)) return;
+      var avatar = button.querySelector('.contact-avatar');
+      ensurePresenceDot(avatar || button, key);
+    });
     if (state.peer && sameKey(state.peer, key)) updateChatHeader();
   }
 
@@ -3454,6 +3517,7 @@
   function clearPresenceState() {
     state.presence.clear();
     state.presenceSources.clear();
+    state.presenceBeaconSeen.clear();
     document.querySelectorAll('.presence-dot').forEach(function (dot) {
       if (dot.parentNode) dot.parentNode.removeChild(dot);
     });
@@ -3506,6 +3570,8 @@
     });
     state.presenceWatched = nextWatched;
     state.presenceWatch.update(keys);
+    syncPresenceBeaconSubscriptions(keys);
+    applyPresenceBeaconSnapshot(keys);
   }
 
   function startPresence() {
@@ -3516,6 +3582,283 @@
       applyPresenceStates(states, source);
     });
     syncPresenceWatch();
+  }
+
+  /* ---------------------------------------------------------------------- */
+  /* Presença portátil (relays sem a extensão `presence`)                   */
+  /* ---------------------------------------------------------------------- */
+
+  function presenceBeaconApp(shard) {
+    return PRESENCE_BEACON_PREFIX + '-' + String(shard);
+  }
+
+  function presenceBeaconShard(pubkey) {
+    var key = normalizedPresenceKey(pubkey);
+    if (!key) return 0;
+    var tail = key.slice(-8);
+    var value = parseInt(tail, 16);
+    if (!isFinite(value)) value = 0;
+    return Math.abs(value) % PRESENCE_BEACON_SHARDS;
+  }
+
+  function presenceBeaconHostFromUrl(url) {
+    if (RELAY && typeof RELAY.hostFromSocket === 'function') {
+      return RELAY.hostFromSocket(url);
+    }
+    return String(url || '')
+      .replace(/^ws/i, 'http')
+      .replace(/\/+$/, '');
+  }
+
+  /**
+   * Relays conectados que não anunciaram `presence: true`. Neles a extensão
+   * nativa não existe, então usamos apenas os beacons.
+   */
+  function presenceBeaconOldHosts() {
+    var hosts = new Set();
+    if (!window.onpostt || !onpostt._connections) return hosts;
+
+    onpostt._connections.forEach(function (entry) {
+      var socket = entry && entry.ws;
+      if (!socket || socket.readyState !== 1) return;
+      if (socket.__onposttPresence !== false) return;
+      var host = presenceBeaconHostFromUrl(entry.url);
+      if (host) hosts.add(host);
+    });
+
+    return hosts;
+  }
+
+  async function savePresenceBlock(host, block) {
+    var response = await fetch(host + '/save_block', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        Accept: 'application/json',
+      },
+      credentials: 'omit',
+      body: JSON.stringify(block),
+    });
+    var text = await response.text();
+    try {
+      return JSON.parse(text);
+    } catch (error) {
+      return { status: 'erro', message: 'Resposta inválida do relay.' };
+    }
+  }
+
+  /**
+   * Cria uma âncora própria por sessão. O beacon é um bloco `delete` que aponta
+   * para ela; depois do primeiro delete a âncora continua existindo como alvo
+   * (o relay mantém o tombstone), então os próximos beacons são aceitos.
+   */
+  async function ensurePresenceBeaconAnchor(hosts) {
+    if (!state.identity || !state.identity.privateKey) return null;
+
+    var anchor = state.presenceBeaconAnchor;
+    if (!anchor) {
+      var signed = await onpostt.signBlock(
+        {
+          mode: 'post',
+          app: PRESENCE_BEACON_ANCHOR_APP,
+          content: '1',
+        },
+        state.identity.privateKey
+      );
+      if (typeof signed === 'string') throw new Error(signed);
+      anchor = { id: signed.id, block: signed, hosts: new Set() };
+      state.presenceBeaconAnchor = anchor;
+    }
+
+    var missing = [];
+    hosts.forEach(function (host) {
+      if (!anchor.hosts.has(host)) missing.push(host);
+    });
+    if (!missing.length) return anchor;
+
+    await Promise.all(
+      missing.map(async function (host) {
+        try {
+          var body = await savePresenceBlock(host, anchor.block);
+          if (body && body.status === 'success') anchor.hosts.add(host);
+        } catch (error) {
+          /* melhor esforço: novo hello/intervalo tenta de novo */
+        }
+      })
+    );
+
+    return anchor;
+  }
+
+  async function publishPresenceBeacon() {
+    if (state.presenceBeaconBusy || !state.identity) return;
+
+    var hosts = presenceBeaconOldHosts();
+    if (hosts.size === 0) return;
+
+    state.presenceBeaconBusy = true;
+    try {
+      var anchor = await ensurePresenceBeaconAnchor(hosts);
+      if (!anchor || anchor.hosts.size === 0) return;
+
+      var shard = presenceBeaconShard(state.identity.publicKey);
+      var signed = await onpostt.signBlock(
+        {
+          mode: 'delete',
+          app: presenceBeaconApp(shard),
+          query: [['block', anchor.id]],
+        },
+        state.identity.privateKey
+      );
+      if (typeof signed === 'string') throw new Error(signed);
+
+      var targets = Array.from(anchor.hosts);
+      await Promise.all(
+        targets.map(async function (host) {
+          if (!hosts.has(host)) return;
+          try {
+            var body = await savePresenceBlock(host, signed);
+            if (!body || body.status !== 'success') {
+              var code = body && body.code;
+              if (code === 'target_not_found' || code === 'target_not_owned') {
+                anchor.hosts.delete(host);
+              }
+            }
+          } catch (error) {
+            /* relay indisponível: o próximo intervalo tenta novamente */
+          }
+        })
+      );
+    } catch (error) {
+      /* presença é melhor esforço; nunca deve quebrar a interface */
+    } finally {
+      state.presenceBeaconBusy = false;
+    }
+  }
+
+  function handlePresenceBeaconBlocks(blocks, shard) {
+    if (!Array.isArray(blocks) || blocks.length === 0) return;
+
+    var expectedApp = presenceBeaconApp(shard);
+    var now = Date.now();
+    var states = [];
+
+    blocks.forEach(function (block) {
+      if (!block || block.mode !== 'delete' || block.app !== expectedApp) return;
+      if (typeof block.pubkey !== 'string') return;
+
+      var key = normalizedPresenceKey(block.pubkey);
+      if (!key) return;
+
+      var created = (Number(block.created_at) || 0) * 1000;
+      if (!created) return;
+      // Evita que um relógio muito adiantado deixe alguém online para sempre.
+      if (created > now + 5 * 60 * 1000) return;
+
+      var seen = Math.min(created, now);
+      if (now - seen > PRESENCE_BEACON_TTL_MS) return;
+
+      var previous = state.presenceBeaconSeen.get(key) || 0;
+      if (previous >= seen) return;
+      state.presenceBeaconSeen.set(key, seen);
+
+      if (!state.presenceWatched.has(key)) return;
+      states.push({ pubkey: key, online: true, lastSeen: seen });
+    });
+
+    if (states.length) applyPresenceStates(states, 'beacon');
+  }
+
+  function applyPresenceBeaconSnapshot(keys) {
+    var now = Date.now();
+    var states = [];
+
+    keys.forEach(function (key) {
+      var lastSeen = state.presenceBeaconSeen.get(key) || 0;
+      if (!lastSeen || now - lastSeen > PRESENCE_BEACON_TTL_MS) return;
+      states.push({ pubkey: key, online: true, lastSeen: lastSeen });
+    });
+
+    if (states.length) applyPresenceStates(states, 'beacon');
+  }
+
+  function syncPresenceBeaconSubscriptions(keys) {
+    if (!MESSAGES_PAGE || typeof onpostt.sub !== 'function') return;
+
+    // Em relays atualizados a extensão nativa já cobre tudo; não cria
+    // assinaturas extras. Elas só existem enquanto houver relay antigo.
+    var hasOldHosts = presenceBeaconOldHosts().size > 0;
+    var wanted = new Set();
+    if (hasOldHosts) {
+      keys.forEach(function (key) {
+        wanted.add(presenceBeaconShard(key));
+      });
+    }
+
+    state.presenceBeaconSubs.forEach(function (unsubscribe, shard) {
+      if (wanted.has(shard)) return;
+      try {
+        unsubscribe();
+      } catch (error) {
+        /* assinatura já encerrada */
+      }
+      state.presenceBeaconSubs.delete(shard);
+    });
+
+    wanted.forEach(function (shard) {
+      if (state.presenceBeaconSubs.has(shard)) return;
+      try {
+        var unsubscribe = onpostt.sub(
+          {
+            mode: 'delete',
+            app: presenceBeaconApp(shard),
+            since: Math.floor((Date.now() - PRESENCE_BEACON_TTL_MS) / 1000),
+            limit: PRESENCE_BEACON_LIMIT,
+          },
+          function (event) {
+            handlePresenceBeaconBlocks(event && event.blocks, shard);
+          }
+        );
+        state.presenceBeaconSubs.set(shard, unsubscribe);
+      } catch (error) {
+        /* melhor esforço */
+      }
+    });
+  }
+
+  function sweepPresenceBeacons() {
+    var now = Date.now();
+    var states = [];
+
+    state.presenceBeaconSeen.forEach(function (lastSeen, key) {
+      if (now - lastSeen <= PRESENCE_BEACON_TTL_MS) return;
+      state.presenceBeaconSeen.delete(key);
+      if (!state.presenceWatched.has(key)) return;
+      states.push({ pubkey: key, online: false, lastSeen: lastSeen });
+    });
+
+    if (states.length) applyPresenceStates(states, 'beacon');
+  }
+
+  function startPresenceBeacon() {
+    if (state.presenceBeaconStarted) return;
+    state.presenceBeaconStarted = true;
+
+    if (!presenceBeaconTimer) {
+      presenceBeaconTimer = setInterval(publishPresenceBeacon, PRESENCE_BEACON_HEARTBEAT_MS);
+    }
+    if (!presenceBeaconSweepTimer) {
+      presenceBeaconSweepTimer = setInterval(sweepPresenceBeacons, PRESENCE_BEACON_SWEEP_MS);
+    }
+
+    // Anuncia imediatamente ao entrar/sair de uma reconexão.
+    publishPresenceBeacon();
+  }
+
+  function clearPresenceBeaconIfNoOldHosts() {
+    if (presenceBeaconOldHosts().size > 0) return;
+    state.presenceBeaconSeen.clear();
+    clearPresenceSource('beacon');
   }
 
   function updateChatHeader() {
@@ -4322,6 +4665,14 @@
       return;
     }
 
+    // Um clique duplo no mesmo contato não deve abrir duas cargas da conversa
+    // nem registrar duas assinaturas de recibo de leitura.
+    if (state.chatOpeningPeer && sameKey(state.chatOpeningPeer, peer)) return;
+
+    var openSeq = state.chatOpenSeq + 1;
+    state.chatOpenSeq = openSeq;
+    state.chatOpeningPeer = peer;
+
     stopAudioRecording(true);
     setNewChatFormOpen(false);
     unhideChat(peer);
@@ -4341,10 +4692,12 @@
 
     try {
       await loadConversation(peer);
-      if (!sameKey(state.peer, peer)) return;
+      if (openSeq !== state.chatOpenSeq || !sameKey(state.peer, peer)) return;
       subscribeConversation(peer);
     } catch (error) {
       reportError(error.message);
+    } finally {
+      if (openSeq === state.chatOpenSeq) state.chatOpeningPeer = '';
     }
   }
 
@@ -5191,7 +5544,7 @@
     if (!added) return;
 
     state.comments.set(blockId, normalizeCommentList(Array.from(byId.values())));
-    state.commentLoaded.add(blockId);
+    if (state.openComments.has(blockId)) state.commentLoaded.add(blockId);
 
     if (state.openComments.has(blockId)) scheduleCommentSurfaceUpdate(blockId);
     if (authors.length > 0) {
@@ -5224,14 +5577,18 @@
         })
       );
       state.comments.set(blockId, list);
-      state.commentLoaded.add(blockId);
+      // Se a thread foi fechada durante o carregamento, não guardamos o cache:
+      // ao reabrir, o histórico precisa ser consultado de novo para refletir
+      // exclusões feitas nesse intervalo.
+      if (state.openComments.has(blockId)) state.commentLoaded.add(blockId);
       await refreshCommenterProfiles();
     } catch (error) {
       reportError(error.message);
     } finally {
       state.commentLoading.delete(blockId);
       if (state.openComments.has(blockId)) {
-        updateCommentSurface(blockId);
+        // Preserva um rascunho digitado enquanto o histórico carregava.
+        updateCommentSurface(blockId, true);
         ensureCommentSubscription(blockId);
       }
     }
@@ -6077,6 +6434,10 @@
         RELAY.setHostStatus(event.url, false);
       }
       clearPresenceSource(event && event.url);
+      clearPresenceBeaconIfNoOldHosts();
+      if (MESSAGES_PAGE && state.presenceWatch) {
+        syncPresenceBeaconSubscriptions(Array.from(state.presenceWatched));
+      }
       if (!onpostt.isConnected) {
         setNet('warn', 'offline');
         // Sem conexão não há como saber quem está online. Esconde os
@@ -6094,6 +6455,12 @@
 
     onpostt.on('hello', function () {
       setNet('ok', 'online');
+      // Em relays antigos, o hello não traz `presence`; começa/retoma o
+      // beacon assim que sabemos que aquele host precisa do fallback.
+      publishPresenceBeacon();
+      if (MESSAGES_PAGE && state.presenceWatch) {
+        syncPresenceBeaconSubscriptions(Array.from(state.presenceWatched));
+      }
 
       // Em uma reconexão, a assinatura global pode ter perdido mensagens
       // acima do pequeno lote inicial. Recarrega uma vez a conversa aberta
@@ -6199,6 +6566,7 @@
     // A partir daqui, um novo `hello` representa reconexão/novo relay, não a
     // conexão inicial que acabou de acontecer.
     state.connectedOnce = true;
+    startPresenceBeacon();
 
     await refreshAll();
     if (!MESSAGES_PAGE) subscribeLive();
