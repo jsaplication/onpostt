@@ -172,6 +172,8 @@ const config = {
     heartbeatInterval: intEnv('SOCKET_HEARTBEAT_INTERVAL', 30000, { min: 5000, max: 120000 }),
     maxSubscriptions: intEnv('SOCKET_MAX_SUBSCRIPTIONS', 25, { min: 1, max: 200 }),
     maxPubkeys: intEnv('SOCKET_MAX_PUBKEYS', 5, { min: 1, max: 50 }),
+    maxPresencePubkeys: intEnv('SOCKET_MAX_PRESENCE_PUBKEYS', 500, { min: 1, max: 5000 }),
+    presenceGraceMs: intEnv('SOCKET_PRESENCE_GRACE_MS', 15000, { min: 1000, max: 120000 }),
   }),
   security: Object.freeze({
     hostAllowed: Object.freeze(hostAllowed),

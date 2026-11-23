@@ -28,6 +28,7 @@ const { getBlocksPage } = require('./getBlocks');
 const { saveBlock } = require('./saveBlock');
 const { blockMatchesFilter } = require('./protocol');
 const { parseReader } = require('./readAuth');
+const { isValidPublicKey } = require('./crypto');
 const { participantKeys, isVisibleTo } = require('./visibility');
 const { isPublicError } = require('./errors');
 
@@ -46,6 +47,146 @@ let subscriptionSeq = 0;
 let heartbeatTimer = null;
 let cleanupTimer = null;
 let started = false;
+
+const PRESENCE_OFFLINE_TTL_MS = 60 * 60 * 1000;
+
+/**
+ * Presença é efêmera e vive apenas neste processo:
+ * - `presenceByPubkey` guarda as conexões abertas da pubkey;
+ * - `presenceWatchers` indexa quem observa cada pubkey, para fan-out O(watchers);
+ * - um período de graça evita piscar offline em reconexões rápidas.
+ *
+ * @type {Map<string, {connections: Set<object>, online: boolean, lastSeen: number, offlineTimer: NodeJS.Timeout | null}>}
+ */
+const presenceByPubkey = new Map();
+/** @type {Map<string, Set<object>>} */
+const presenceWatchers = new Map();
+
+function normalizePresenceKey(value) {
+  return typeof value === 'string' ? value.trim().toLowerCase() : '';
+}
+
+function broadcastPresenceState(pubkey, online, lastSeen) {
+  const watchers = presenceWatchers.get(pubkey);
+  if (!watchers || watchers.size === 0) return 0;
+
+  const payload = {
+    response: 'presence',
+    states: [{ pubkey, online: Boolean(online), lastSeen: Number(lastSeen) || null }],
+  };
+  let sent = 0;
+  for (const state of watchers) {
+    if (sendJson(state.ws, payload)) sent += 1;
+  }
+  return sent;
+}
+
+function addPresenceConnection(state, pubkey) {
+  if (!pubkey) return;
+  let entry = presenceByPubkey.get(pubkey);
+  if (!entry) {
+    entry = {
+      connections: new Set(),
+      online: false,
+      lastSeen: 0,
+      offlineTimer: null,
+    };
+    presenceByPubkey.set(pubkey, entry);
+  }
+
+  if (entry.offlineTimer) {
+    clearTimeout(entry.offlineTimer);
+    entry.offlineTimer = null;
+  }
+
+  const wasOnline = entry.online;
+  entry.connections.add(state);
+  entry.lastSeen = Date.now();
+  if (!wasOnline) {
+    entry.online = true;
+    broadcastPresenceState(pubkey, true, entry.lastSeen);
+  }
+}
+
+function removePresenceConnection(state, pubkey) {
+  const entry = presenceByPubkey.get(pubkey);
+  if (!entry) return;
+
+  entry.connections.delete(state);
+  if (entry.connections.size > 0) return;
+
+  entry.lastSeen = Date.now();
+  if (!entry.online || entry.offlineTimer) return;
+
+  entry.offlineTimer = setTimeout(() => {
+    entry.offlineTimer = null;
+    if (entry.connections.size > 0) return;
+    entry.online = false;
+    entry.lastSeen = Date.now();
+    broadcastPresenceState(pubkey, false, entry.lastSeen);
+  }, config.ws.presenceGraceMs);
+  if (typeof entry.offlineTimer.unref === 'function') entry.offlineTimer.unref();
+}
+
+function setPresenceViewer(state, viewer) {
+  const pubkey = normalizePresenceKey(viewer);
+  if (!pubkey) return;
+  if (state.viewer === pubkey) return;
+
+  if (state.viewer) removePresenceConnection(state, state.viewer);
+  state.viewer = pubkey;
+  addPresenceConnection(state, pubkey);
+}
+
+function updatePresenceWatch(state, pubkeys) {
+  const next = new Set(pubkeys);
+  const previous = state.presenceWatch;
+
+  for (const pubkey of previous) {
+    if (next.has(pubkey)) continue;
+    const watchers = presenceWatchers.get(pubkey);
+    if (!watchers) continue;
+    watchers.delete(state);
+    if (watchers.size === 0) presenceWatchers.delete(pubkey);
+  }
+
+  for (const pubkey of next) {
+    if (previous.has(pubkey)) continue;
+    let watchers = presenceWatchers.get(pubkey);
+    if (!watchers) {
+      watchers = new Set();
+      presenceWatchers.set(pubkey, watchers);
+    }
+    watchers.add(state);
+  }
+
+  state.presenceWatch = next;
+}
+
+function presenceSnapshot(pubkey) {
+  const entry = presenceByPubkey.get(pubkey);
+  return {
+    pubkey,
+    online: Boolean(entry && entry.online),
+    lastSeen: entry && entry.lastSeen ? entry.lastSeen : null,
+  };
+}
+
+function sendPresenceSnapshot(ws, pubkeys) {
+  sendJson(ws, {
+    response: 'presence',
+    states: pubkeys.map(presenceSnapshot),
+  });
+}
+
+function prunePresence() {
+  const now = Date.now();
+  for (const [pubkey, entry] of presenceByPubkey) {
+    if (entry.connections.size > 0 || entry.offlineTimer) continue;
+    if (now - entry.lastSeen < PRESENCE_OFFLINE_TTL_MS) continue;
+    presenceByPubkey.delete(pubkey);
+  }
+}
 
 function sendJson(ws, payload) {
   if (ws.readyState !== WebSocket.OPEN) return false;
@@ -224,6 +365,7 @@ function addSubscription(ws, state, data) {
 
   state.subscriptions.set(id, subscription);
   state.pubkeys = nextPubkeys;
+  setPresenceViewer(state, reader.viewer);
   refreshStats();
 
   sendJson(ws, {
@@ -275,6 +417,89 @@ function removeSubscription(ws, state, data) {
   sendJson(ws, {
     response: 'unsubscribed',
     subscription: id,
+    ...(requestId ? { requestId } : {}),
+  });
+}
+
+async function updatePresenceSubscription(ws, state, data) {
+  const requestId = requestIdOf(data);
+
+  let reader;
+  try {
+    reader = parseReader(data.reader);
+  } catch (err) {
+    sendJson(
+      ws,
+      errorPayload(
+        isPublicError(err) ? err.message : 'Token de leitura inválido.',
+        isPublicError(err) ? err.code : 'invalid_reader',
+        requestId
+      )
+    );
+    return;
+  }
+
+  if (!reader.viewer) {
+    sendJson(
+      ws,
+      errorPayload(
+        'Presença exige um token de leitura autenticado.',
+        'presence_requires_reader',
+        requestId
+      )
+    );
+    return;
+  }
+
+  if (!Array.isArray(data.pubkeys)) {
+    sendJson(ws, errorPayload('Campo "pubkeys" deve ser uma lista.', 'invalid_pubkeys', requestId));
+    return;
+  }
+
+  const pubkeys = [];
+  const seen = new Set();
+  for (const value of data.pubkeys) {
+    if (!isValidPublicKey(value)) {
+      sendJson(
+        ws,
+        errorPayload('Campo "pubkeys" contém uma pubkey inválida.', 'invalid_pubkeys', requestId)
+      );
+      return;
+    }
+    const pubkey = value.toLowerCase();
+    if (seen.has(pubkey)) continue;
+    seen.add(pubkey);
+    pubkeys.push(pubkey);
+  }
+
+  if (pubkeys.length > config.ws.maxPresencePubkeys) {
+    sendJson(
+      ws,
+      errorPayload(
+        `Limite de ${config.ws.maxPresencePubkeys} pubkeys por observação de presença.`,
+        'too_many_presence_pubkeys',
+        requestId
+      )
+    );
+    return;
+  }
+
+  setPresenceViewer(state, reader.viewer);
+  updatePresenceWatch(state, pubkeys);
+
+  sendJson(ws, {
+    response: 'presence_subscribed',
+    count: pubkeys.length,
+    ...(requestId ? { requestId } : {}),
+  });
+  sendPresenceSnapshot(ws, pubkeys);
+}
+
+function clearPresenceSubscription(ws, state, data) {
+  const requestId = requestIdOf(data);
+  updatePresenceWatch(state, []);
+  sendJson(ws, {
+    response: 'presence_unsubscribed',
     ...(requestId ? { requestId } : {}),
   });
 }
@@ -365,9 +590,20 @@ async function handleMessage(ws, state, raw) {
         id: state.id,
         subscriptions: state.subscriptions.size,
         pubkeys: state.pubkeys.size,
+        presenceWatch: state.presenceWatch.size,
       },
       requestId: requestIdOf(data),
     });
+    return;
+  }
+
+  if (request === 'presence_sub') {
+    updatePresenceSubscription(ws, state, data);
+    return;
+  }
+
+  if (request === 'presence_unsub') {
+    clearPresenceSubscription(ws, state, data);
     return;
   }
 
@@ -390,6 +626,8 @@ function connectionState(ws, req) {
     ip: req.socket?.remoteAddress || 'unknown',
     subscriptions: new Map(),
     pubkeys: new Set(),
+    viewer: null,
+    presenceWatch: new Set(),
     rate: { count: 0, reset: Date.now() + config.rateLimit.windowMs },
     inactivityTimer: null,
   };
@@ -416,6 +654,7 @@ function startTimers() {
 
   cleanupTimer = setInterval(() => {
     refreshStats();
+    prunePresence();
   }, 60000);
   if (typeof cleanupTimer.unref === 'function') cleanupTimer.unref();
 }
@@ -481,6 +720,8 @@ function setupWebSocket(server) {
       name: config.protocol.name,
       relay: config.relayName,
       heartbeatIntervalMs: config.ws.heartbeatInterval,
+      presence: true,
+      presenceGraceMs: config.ws.presenceGraceMs,
     });
 
     ws.on('pong', () => {
@@ -497,6 +738,8 @@ function setupWebSocket(server) {
 
     ws.on('close', () => {
       if (state.inactivityTimer) clearTimeout(state.inactivityTimer);
+      if (state.viewer) removePresenceConnection(state, state.viewer);
+      updatePresenceWatch(state, []);
       clients.delete(ws);
       refreshStats();
       logger.debug('WebSocket desconectado', {
@@ -592,9 +835,16 @@ async function closeWebSocket() {
 
   for (const [ws, state] of clients) {
     if (state.inactivityTimer) clearTimeout(state.inactivityTimer);
+    if (state.viewer) removePresenceConnection(state, state.viewer);
+    updatePresenceWatch(state, []);
     closeSocket(ws, 1001, 'Servidor encerrando');
   }
   clients.clear();
+  for (const entry of presenceByPubkey.values()) {
+    if (entry.offlineTimer) clearTimeout(entry.offlineTimer);
+  }
+  presenceByPubkey.clear();
+  presenceWatchers.clear();
   refreshStats();
 
   await new Promise((resolve) => {
