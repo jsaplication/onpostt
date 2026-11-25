@@ -1,30 +1,34 @@
 /*!
  * onpostt · configuração dos relays
  *
- * Ponto único de configuração do front.
+ * Ponto único de configuração do front. A lista abaixo é exposta em
+ * `window.relays` e é a única fonte usada por app.js, perfil.js e relays-ui.js.
  *
- * 1. A lista RELAYS abaixo é o padrão do projeto. Para mudar o padrão,
- *    edite apenas este arquivo.
+ * 1. Para mudar os relays padrão, edite apenas DEFAULT_RELAYS neste arquivo.
  * 2. O usuário também pode adicionar/remover relays direto pela interface
  *    (clique no status de conexão no topo). Essa lista fica salva no
  *    localStorage deste navegador.
- * 3. app.js e perfil.js usam este módulo para conectar, consultar e publicar.
+ * 3. app.js, perfil.js e relays-ui.js usam `window.relays`/`onposttRelay`
+ *    para conectar, consultar, publicar e gerenciar a lista.
  *
  * Cada item pode ser escrito com ou sem esquema:
  *   'https://meu-relay.exemplo.com'
- *   'meu-relay.exemplo.com'            -> https://
- *   'localhost:3000' / '127.0.0.1:3000' -> http://
- *   'wss://meu-relay.exemplo.com'      -> convertido para https://
+ *   'meu-relay.exemplo.com'       -> https://
+ *   'meu-relay.local:8080'        -> http://
+ *   'wss://meu-relay.exemplo.com' -> convertido para https://
  */
 (function (global) {
   'use strict';
 
-  var RELAYS = [
-    'https://onpostt-relay1.onrender.com',
-    'http://localhost:3000',
+  var DEFAULT_RELAYS = [
+    'https://relay2.onpostt.com',
   ];
 
   var STORAGE_KEY = 'onpostt.demo.relays';
+  // Versão do formato persistido. Listas antigas (array puro) são ignoradas
+  // para que relays obsoletos salvos em versões anteriores não voltem a ser
+  // usados como fallback.
+  var STORAGE_VERSION = 2;
   var FETCH_TIMEOUT_MS = 15000;
   var PROBE_TIMEOUT_MS = 4000;
   var PROBE_RETRY_TIMEOUT_MS = 15000;
@@ -83,7 +87,27 @@
       var raw = global.localStorage && global.localStorage.getItem(STORAGE_KEY);
       if (!raw) return null;
       var parsed = JSON.parse(raw);
-      return Array.isArray(parsed) ? parsed : null;
+
+      // Formato antigo (lista pura): descartado de propósito. A migração
+      // garante que apenas os relays definidos em DEFAULT_RELAYS sejam usados
+      // até o usuário configurar uma nova lista por esta versão do app.
+      if (Array.isArray(parsed)) {
+        try {
+          global.localStorage.removeItem(STORAGE_KEY);
+        } catch (removeError) {
+          /* localStorage indisponível */
+        }
+        return null;
+      }
+
+      if (
+        !parsed ||
+        parsed.version !== STORAGE_VERSION ||
+        !Array.isArray(parsed.relays)
+      ) {
+        return null;
+      }
+      return parsed.relays;
     } catch (error) {
       return null;
     }
@@ -92,7 +116,10 @@
   function writeStoredRelays(list) {
     try {
       if (global.localStorage) {
-        global.localStorage.setItem(STORAGE_KEY, JSON.stringify(list));
+        global.localStorage.setItem(
+          STORAGE_KEY,
+          JSON.stringify({ version: STORAGE_VERSION, relays: list })
+        );
       }
     } catch (error) {
       /* localStorage indisponível: a lista vale só nesta sessão */
@@ -187,13 +214,16 @@
     );
   }
 
-  var defaults = normalizeList(RELAYS);
+  var defaults = normalizeList(DEFAULT_RELAYS);
   var stored = readStoredRelays();
   var configured = stored ? normalizeList(stored) : defaults.slice();
   if (!configured.length) configured = defaults.slice();
 
-  // Lista efetiva escolhida pelo usuário (para exibição).
-  var hosts = configured.slice();
+  // Lista efetiva escolhida pelo usuário. É o mesmo array exposto ao front em
+  // `window.relays`; `hosts` permanece como alias interno para o restante do
+  // módulo e para a API consumida pela interface.
+  var relays = configured.slice();
+  var hosts = relays;
   // Lista efetivamente usada para conectar/consultar (relays que responderam).
   var activeHosts = configured.slice();
   var statusByHost = {};
@@ -258,9 +288,9 @@
   }
 
   /**
-   * Relays gratuitos (ex.: Render) podem levar mais que os 4 s do probe
-   * inicial para acordar. Tentamos uma vez mais em segundo plano para não
-   * deixar um relay saudável fora da conexão até o usuário recarregar a página.
+   * Relays gratuitos podem levar mais que os 4 s do probe inicial para
+   * acordar. Tentamos uma vez mais em segundo plano para não deixar um relay
+   * saudável fora da conexão até o usuário recarregar a página.
    */
   function scheduleProbeRetry(failedHosts) {
     failedHosts.forEach(function (host) {
@@ -580,6 +610,9 @@
     },
   };
 
+  // Fonte única consumida pelos demais scripts. O array é o mesmo de
+  // `api.hosts`, portanto adicionar/remover pela interface atualiza os dois.
+  global.relays = relays;
   global.onposttRelay = api;
 
   // Mantém outras abas do mesmo navegador em sincronia. A aba que alterou a

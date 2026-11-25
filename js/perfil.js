@@ -2,13 +2,11 @@
 
 (function () {
   var APP = 'onpostt-demo';
-  var RELAY =
-    window.onposttRelay && Array.isArray(window.onposttRelay.hosts)
-      ? window.onposttRelay
-      : {
-          hosts: ['http://localhost:3000'],
-          sockets: ['ws://localhost:3000'],
-        };
+  // js/relay.js é a fonte única da lista de relays e deve carregar antes.
+  var RELAY = window.onposttRelay;
+  if (!RELAY || !Array.isArray(RELAY.hosts) || !Array.isArray(window.relays)) {
+    throw new Error('onpostt: carregue js/relay.js antes de js/perfil.js.');
+  }
   var IDENTITY_KEY = 'onpostt.demo.identity';
   var MAX_POSTS = 100;
   var MAX_REPOSTS = 100;
@@ -1942,8 +1940,8 @@
     }
     var text = byId('net-label');
     if (text) text.textContent = label;
-    if (pill && RELAY && Array.isArray(RELAY.hosts)) {
-      pill.title = 'Relays (clique para gerenciar): ' + RELAY.hosts.join(' · ');
+    if (pill && Array.isArray(window.relays)) {
+      pill.title = 'Relays (clique para gerenciar): ' + window.relays.join(' · ');
     }
   }
 

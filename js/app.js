@@ -8,33 +8,22 @@
   // post.html também reaproveita o app.js, mas exibe somente uma publicação.
   var POST_PAGE = document.body.classList.contains('post-body');
 
-  // Configuração central em js/relay.js. O fallback mantém o app funcionando
-  // mesmo se aquele arquivo não for carregado.
-  var RELAY =
-    window.onposttRelay && Array.isArray(window.onposttRelay.hosts)
-      ? window.onposttRelay
-      : (function () {
-          var fallbackHosts = ['http://localhost:3000'];
-          return {
-            hosts: fallbackHosts,
-            sockets: fallbackHosts.map(function (url) {
-              return url.replace(/^http/i, 'ws');
-            }),
-            url: function (path) {
-              return fallbackHosts[0] + path;
-            },
-          };
-        })();
+  // Configuração central em js/relay.js, que precisa ser carregado antes
+  // deste arquivo. Não há lista de fallback aqui: a fonte única é
+  // `window.relays`, mantida em sincronia com `onposttRelay.hosts`.
+  var RELAY = window.onposttRelay;
+  if (!RELAY || !Array.isArray(RELAY.hosts) || !Array.isArray(window.relays)) {
+    throw new Error('onpostt: carregue js/relay.js antes de js/app.js.');
+  }
 
-  var ORIGIN = RELAY.hosts;
-  var WS_URL = RELAY.sockets;
+  var ORIGIN = window.relays;
 
   // Relays que responderam à última verificação. O relay.js remove da
   // conexão os hosts fora do ar para não travar as listagens (a biblioteca
   // espera todos os hosts responderem).
   function relayConnectOptions() {
-    if (RELAY && typeof RELAY.connectOptions === 'function') return RELAY.connectOptions();
-    return { host: ORIGIN, socket: WS_URL };
+    if (typeof RELAY.connectOptions === 'function') return RELAY.connectOptions();
+    return { host: ORIGIN, socket: RELAY.sockets };
   }
   // O feed carrega uma página pequena e cresce sob demanda com offset.
   var FEED_PAGE_SIZE = 20;
@@ -784,8 +773,8 @@
     }
     var text = byId('net-label');
     if (text) text.textContent = label;
-    if (pill && RELAY && Array.isArray(RELAY.hosts)) {
-      pill.title = 'Relays (clique para gerenciar): ' + RELAY.hosts.join(' · ');
+    if (pill && Array.isArray(window.relays)) {
+      pill.title = 'Relays (clique para gerenciar): ' + window.relays.join(' · ');
     }
   }
 
